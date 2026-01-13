@@ -1,5 +1,5 @@
 name: bigboss_eren
-description: "BigBoss Eren Kuyumculuk POS Sistemi"
+description: BigBoss Eren Kuyumculuk POS Sistemi
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -10,15 +10,13 @@ dependencies:
   flutter:
     sdk: flutter
   
+  # Temel Paketler (En Uyumlu Sürümler)
   cupertino_icons: ^1.0.2
-  http: ^1.2.0
-  webview_flutter: ^4.7.0
-  firebase_core: ^4.3.0
-  cloud_firestore: ^6.1.1
-  firebase_auth: ^6.1.3
-  intl: ^0.18.0 
-  pdf: ^3.10.4       
-  printing: ^5.11.0
+  intl: ^0.19.0
+  firebase_core: ^2.27.0
+  cloud_firestore: ^4.15.8
+  pdf: ^3.10.4
+  printing: ^5.12.0
 
 dev_dependencies:
   flutter_test:
@@ -27,6 +25,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-
-  assets:
-    - assets/pos.html

@@ -1,144 +1,154 @@
 import time
-import sys
-try:
-    import firebase_admin
-    from firebase_admin import credentials
-    from firebase_admin import firestore
-    from selenium import webdriver
-    from selenium.webdriver.chrome.service import Service
-    from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.common.by import By
-    from webdriver_manager.chrome import ChromeDriverManager
-except ImportError:
-    print("Kutuphaneler eksik! (pip install firebase-admin selenium webdriver-manager)")
-    sys.exit()
+import firebase_admin
+from firebase_admin import credentials, firestore
+import undetected_chromedriver as uc
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import StaleElementReferenceException
 
-try:
-    # serviceAccountKey.json dosyasının bu script ile aynı klasörde olduğundan emin ol
+# 1. Firebase Bağlantısı
+if not firebase_admin._apps:
     cred = credentials.Certificate("serviceAccountKey.json")
     firebase_admin.initialize_app(cred)
-    db = firestore.client()
-    print(">>> Firebase Baglandi!")
-except Exception as e:
-    print("Baglanti Hatasi: " + str(e))
-    sys.exit()
+db = firestore.client()
 
-URL = "https://canlipiyasalar.haremaltin.com"
+print("Bot başlatılıyor (Darphane İşçilik Tablosu Modu)...")
 
-def safe_float(text):
-    try:
-        return float(text.strip().replace(",", "."))
-    except:
-        return 0.0
+# 2. Tarayıcı Ayarları
+options = uc.ChromeOptions()
+options.add_argument("--no-first-run")
+options.add_argument("--password-store=basic")
+options.add_argument("--window-size=1280,800")
 
-def motoru_calistir():
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new") 
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--log-level=3")
-    
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    
-    print(">>> Bot calisiyor (Harem Isçilik Tablosu)...")
-    
+driver = uc.Chrome(options=options, use_subprocess=True)
+
+TARGET_URL = "https://canlipiyasalar.haremaltin.com/"
+
+# --- TABLO YAPILANDIRMASI ---
+# Bu tabloda satır ismini bulup, o satırdaki 4 ayrı sütunu okuyacağız.
+# Yapı: [0]İsim - [1]YeniAlış - [2]YeniSatış - [3]EskiAlış - [4]EskiSatış
+
+URUNLER = [
+    {"sitedeki_ad": "Çeyrek",   "db_ad": "Ceyrek"},
+    {"sitedeki_ad": "Yarım",    "db_ad": "Yarim"},
+    {"sitedeki_ad": "Tek",      "db_ad": "Tam"},      # Sitede Tek -> Bizde Tam
+    {"sitedeki_ad": "Ata",      "db_ad": "Ata"},
+    {"sitedeki_ad": "Gremese",  "db_ad": "Gremese"},
+    {"sitedeki_ad": "Ata 5'li", "db_ad": "Ata_5li"}
+]
+
+# --- KORUMA AYARLARI ---
+MAX_HATA_SINIRI = 5
+REFRESH_SURESI = 1800 
+son_yenileme_zamani = time.time()
+hata_sayaci = 0
+
+try:
+    driver.get(TARGET_URL)
+    print("Site açıldı. Veriler bekleniyor...")
+    time.sleep(10)
+
     while True:
-        try:
-            # Manuel mod kontrolü
-            doc_ref = db.collection("piyasa").document("canli")
-            doc = doc_ref.get()
-            if doc.exists and doc.to_dict().get("mod") == "manuel":
-                time.sleep(3)
+        simdiki_zaman = time.time()
+
+        # 1. Bakım (Refresh)
+        if simdiki_zaman - son_yenileme_zamani > REFRESH_SURESI:
+            print("⏳ Bakım zamanı: Sayfa yenileniyor...")
+            try:
+                driver.refresh()
+                time.sleep(10)
+                son_yenileme_zamani = simdiki_zaman
+                hata_sayaci = 0
+            except:
+                pass
+
+        # 2. Hata Koruması
+        if hata_sayaci >= MAX_HATA_SINIRI:
+            print("⚠️ Çok hata alındı, sayfa yeniden yükleniyor...")
+            try:
+                driver.get(TARGET_URL)
+                time.sleep(10)
+                hata_sayaci = 0
+            except:
+                time.sleep(10)
                 continue
 
-            driver.get(URL)
-            time.sleep(3) # Sayfanın yüklenmesini bekle
+        try:
+            wait = WebDriverWait(driver, 20, ignored_exceptions=[StaleElementReferenceException])
+            
+            # --- A) HAS ALTIN (Ana Fiyat) ---
+            # Bunu hala çekiyoruz çünkü hesaplamada lazım olabilir
+            has_satir = wait.until(
+                EC.presence_of_element_located((By.XPATH, "//tr[.//a[contains(text(), 'HAS')]]"))
+            )
+            has_sutunlar = has_satir.find_elements(By.TAG_NAME, "td")
+            
+            if len(has_sutunlar) >= 3:
+                has_alis = float(has_sutunlar[1].text.strip().replace('.', '').replace(',', '.'))
+                has_satis = float(has_sutunlar[2].text.strip().replace('.', '').replace(',', '.'))
+                
+                print(f"🟡 HAS ALTIN: {has_alis} - {has_satis}")
+                
+                db.collection('piyasa').document('canli').set({
+                    'alis': has_alis,
+                    'satis': has_satis,
+                    'tarih': firestore.SERVER_TIMESTAMP
+                })
 
-            # --- GÜNCELLEME BURADA YAPILDI ---
-            # 'tarih': firestore.SERVER_TIMESTAMP ekledik.
-            veri_paketi = {
-                "guncelleme": time.strftime('%H:%M:%S'),
-                "mod": "otomatik",
-                "tarih": firestore.SERVER_TIMESTAMP 
-            }
-
-            # 1. Ana Tablodan HAS ALTIN Çekme
-            rows = driver.find_elements(By.TAG_NAME, "tr")
-            for r in rows:
+            # --- B) DARPHANE İŞÇİLİK TABLOSU ---
+            iscilik_verileri = {}
+            
+            for urun in URUNLER:
                 try:
-                    cols = r.find_elements(By.TAG_NAME, "td")
-                    if len(cols) < 3: continue
-                    isim = cols[0].text.upper()
-                    # HAS ALTIN satırını bul (GRAM ALTIN ile karışmasın diye kontrol)
-                    if "HAS" in isim and "ALTIN" in isim and "GRAM" not in isim:
+                    isim = urun["sitedeki_ad"]
+                    # Sitedeki isme (örn: Çeyrek) sahip satırı bul
+                    # XPath: İçinde 'Çeyrek' yazan 'a' etiketine sahip 'tr'
+                    satir = driver.find_element(By.XPATH, f"//tr[td/a[contains(text(), \"{isim}\")]]")
+                    
+                    sutunlar = satir.find_elements(By.TAG_NAME, "td")
+                    
+                    # Senin attığın HTML'e göre sütunlar şöyle:
+                    # [0]: İsim (Link)
+                    # [1]: Yeni Alış
+                    # [2]: Yeni Satış
+                    # [3]: Eski Alış
+                    # [4]: Eski Satış
+                    
+                    if len(sutunlar) >= 5:
+                        # Verileri temizle (virgül -> nokta)
+                        yeni_alis = float(sutunlar[1].text.strip().replace('.', '').replace(',', '.'))
+                        yeni_satis = float(sutunlar[2].text.strip().replace('.', '').replace(',', '.'))
                         
-                        a_txt = cols[1].text.replace(".", "").replace(",", ".")
-                        s_txt = cols[2].text.replace(".", "").replace(",", ".")
-                        veri_paketi["alis"] = float(a_txt)
-                        veri_paketi["satis"] = float(s_txt)
-                        break
-                except: continue
+                        eski_alis = float(sutunlar[3].text.strip().replace('.', '').replace(',', '.'))
+                        eski_satis = float(sutunlar[4].text.strip().replace('.', '').replace(',', '.'))
+                        
+                        db_key = urun["db_ad"]
+                        
+                        # Veritabanına hem Yeni hem Eski olarak kaydediyoruz
+                        iscilik_verileri[f"Yeni_{db_key}"] = {'alis': yeni_alis, 'satis': yeni_satis}
+                        iscilik_verileri[f"Eski_{db_key}"] = {'alis': eski_alis, 'satis': eski_satis}
+                        
+                        print(f"   🔨 {db_key} -> Yeni: {yeni_alis}/{yeni_satis} | Eski: {eski_alis}/{eski_satis}")
 
-            # 2. İşçilik Tablosundan (Çeyrek, Yarım vb.) Veri Çekme
-            boxes = driver.find_elements(By.CLASS_NAME, "box")
-            target_table = None
-            
-            for box in boxes:
-                if "Darphane İşçilik Fiyatları (Has)" in box.text:
-                    target_table = box.find_element(By.TAG_NAME, "table")
-                    break
-            
-            if target_table:
-                tr_list = target_table.find_elements(By.TAG_NAME, "tr")
-                
-                for tr in tr_list:
-                    tds = tr.find_elements(By.TAG_NAME, "td")
-                    if len(tds) < 5: continue
-                    
-                    row_name = tds[0].text.strip() 
-                    
-                    # Sütunlar: İsim | Yeni Alış | Yeni Satış | Eski Alış | Eski Satış
-                    y_alis = safe_float(tds[1].text)
-                    y_satis = safe_float(tds[2].text)
-                    e_alis = safe_float(tds[3].text)
-                    e_satis = safe_float(tds[4].text)
+                except Exception as row_e:
+                    # O an o ürünü bulamazsa devam et
+                    pass
 
-                    # Verileri eşle
-                    if "Çeyrek" in row_name:
-                        veri_paketi["y_ceyrek_alis_has"] = y_alis
-                        veri_paketi["y_ceyrek_satis_has"] = y_satis
-                        veri_paketi["e_ceyrek_alis_has"] = e_alis
-                        veri_paketi["e_ceyrek_satis_has"] = e_satis
-                    elif "Yarım" in row_name:
-                        veri_paketi["y_yarim_alis_has"] = y_alis
-                        veri_paketi["y_yarim_satis_has"] = y_satis
-                        veri_paketi["e_yarim_alis_has"] = e_alis
-                        veri_paketi["e_yarim_satis_has"] = e_satis
-                    elif "Tek" in row_name: # Tam Altın genelde "Tek" geçer
-                        veri_paketi["y_tam_alis_has"] = y_alis
-                        veri_paketi["y_tam_satis_has"] = y_satis
-                        veri_paketi["e_tam_alis_has"] = e_alis
-                        veri_paketi["e_tam_satis_has"] = e_satis
-                    elif "Ata" in row_name and "5" not in row_name:
-                        veri_paketi["y_ata_alis_has"] = y_alis
-                        veri_paketi["y_ata_satis_has"] = y_satis
-                        veri_paketi["e_ata_alis_has"] = e_alis
-                        veri_paketi["e_ata_satis_has"] = e_satis
-                    elif "Gremese" in row_name:
-                        veri_paketi["y_gremse_alis_has"] = y_alis
-                        veri_paketi["y_gremse_satis_has"] = y_satis
-                        veri_paketi["e_gremse_alis_has"] = e_alis
-                        veri_paketi["e_gremse_satis_has"] = e_satis
+            if iscilik_verileri:
+                iscilik_verileri['tarih'] = firestore.SERVER_TIMESTAMP
+                db.collection('piyasa').document('iscilik').set(iscilik_verileri)
 
-            # Veriyi Firebase'e Bas
-            if "alis" in veri_paketi:
-                doc_ref.set(veri_paketi, merge=True)
-                print(f"[{time.strftime('%H:%M:%S')}] Guncellendi -> Has: {veri_paketi['alis']} | Tarih Damgasi Eklendi")
-                
+            hata_sayaci = 0
+
         except Exception as e:
-            print("Hata: " + str(e))
-            
-        time.sleep(10) # Harem'i çok yormamak için süreyi 10 saniye yaptım, istersen düşürürsün.
+            hata_sayaci += 1
+            print(f"Hata ({hata_sayaci}): {str(e).splitlines()[0]}")
+            if "no such window" in str(e):
+                break
 
-if __name__ == "__main__":
-    motoru_calistir()
+        time.sleep(5)
+
+except KeyboardInterrupt:
+    print("\nBot durduruldu.")
+    driver.quit()
