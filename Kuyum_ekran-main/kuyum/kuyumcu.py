@@ -152,3 +152,7 @@ try:
 except KeyboardInterrupt:
     print("\nBot durduruldu.")
     driver.quit()
+except Exception as genel_hata:
+    # Program çökerse buraya düşer ve ekran kapanmaz
+    print(f"\nBEKLENMEYEN HATA: {genel_hata}")
+    input("Kapatmak için Enter'a basın...")
