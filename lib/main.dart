@@ -7,30 +7,210 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
-  runApp(const ErenKuyumculukApp());
+  print("🔥🔥🔥 HAFIZA SİLİNİYOR... 🔥🔥🔥");
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.clear(); 
+  print("🔥🔥🔥 HAFIZA TERTEMİZ OLDU 🔥🔥🔥");
+  runApp(const BaslaticiUygulama());   
+}
+class BaslaticiUygulama extends StatelessWidget {
+  const BaslaticiUygulama({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Bigbos Eren Kuyumculuk',
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1B2631)),
+        scaffoldBackgroundColor: const Color(0xFFEDEFF5),
+      ),
+      home: const AcilisEkrani(), // İlk burası açılacak
+    );
+  }
+}
+class AcilisEkrani extends StatefulWidget {
+  const AcilisEkrani({super.key});
+
+  @override
+  State<AcilisEkrani> createState() => _AcilisEkraniState();
+}
+
+class _AcilisEkraniState extends State<AcilisEkrani> {
+  String _durum = "Sistem Başlatılıyor...";
+  String _hataDetayi="";
+  bool _hataVar = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _guvenliBaslat();
+  }
+
+Future<void> _guvenliBaslat() async {
+    try {
+      setState(() => _durum = "Sunucuya Bağlanılıyor...");
+      await Firebase.initializeApp();
+
+      setState(() => _durum = "Kimlik Doğrulanıyor...");
+      await DB.baslat(); // Hafızadaki kodu okur
+
+      // HEDEF: Varsayılan olarak Giriş Ekranı
+      Widget hedefEkran = const LoginScreen();
+
+      // Eğer hafızada bir kod varsa (Örn: eren_kuyumculuk)
+      if (DB.magazaKodu.isNotEmpty) {
+        print("LOG: Hafızada mağaza bulundu: ${DB.magazaKodu}. Kontrol ediliyor...");
+        
+        try {
+          // Veritabanına sor: Bu mağaza gerçekten var mı?
+          var doc = await FirebaseFirestore.instance
+              .collection('magazalar')
+              .doc(DB.magazaKodu)
+              .collection('ayarlar')
+              .doc('genel')
+              .get();
+
+          if (doc.exists) {
+            // VAR: Harika, içeri al.
+            print("LOG: Mağaza doğrulandı.");
+            hedefEkran = const PosScreen();
+          } else {
+            // YOK: Silinmiş! ACİL DURUM PROSEDÜRÜ
+            print("LOG: Mağaza veritabanında YOK! Oturum zorla kapatılıyor...");
+            
+            // 1. Hafızayı temizle
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.clear(); // Hepsini sil
+            
+            // 2. RAM'i temizle
+            DB.magazaKodu = "";
+            
+            // 3. Hedef zaten LoginScreen idi, öyle kalsın.
+          }
+        } catch (e) {
+          print("LOG: Bağlantı hatası ($e). Güvenlik için çıkış yapılıyor.");
+          // İnternet yoksa veya hata varsa riske atma, çıkış yap.
+          await DB.cikisYap();
+          hedefEkran = const LoginScreen();
+        }
+      }
+
+      // YÖNLENDİRME
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => hedefEkran),
+          (route) => false // Geri tuşunu iptal et, geçmişi sil
+        );
+      }
+
+    } catch (e) {
+      setState(() {
+        _hataVar = true;
+        _durum = "KRİTİK HATA: $e";
+        _hataDetayi = e.toString();
+      });
+    }
+  }
+   
+   @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF1B2631),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(30.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Logo veya İkon
+              const Icon(Icons.diamond, size: 80, color: Color(0xFFD4AF37)),
+              const SizedBox(height: 20),
+              
+              const Text(
+                "EREN KUYUMCULUK", 
+                style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)
+              ),
+              const SizedBox(height: 40),
+
+              // Hata varsa Kırmızı Yazı, Yoksa Dönen Tekerlek
+              if (_hataVar)
+                Text(_durum, style: const TextStyle(color: Colors.redAccent, fontSize: 16), textAlign: TextAlign.center)
+              else ...[
+                const CircularProgressIndicator(color: Color(0xFFD4AF37)),
+                const SizedBox(height: 20),
+                Text(_durum, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                const SizedBox(height: 40),
+              
+              // MANUEL SIFIRLAMA BUTONU
+              TextButton.icon(
+                onPressed: () async {
+                  print("Manuel sıfırlama yapılıyor...");
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.clear(); // Hafızayı sil
+                  DB.magazaKodu = ""; // Değişkeni sil
+                  
+                  // Uygulamayı yeniden başlatır gibi Login'e at
+                  Navigator.pushAndRemoveUntil(
+                    context, 
+                    MaterialPageRoute(builder: (c) => const LoginScreen()), 
+                    (route) => false
+                  );
+                },
+                icon: const Icon(Icons.delete_forever, color: Colors.white54),
+                label: const Text("Önbelleği Temizle ve Çıkış Yap", style: TextStyle(color: Colors.white54)),
+              ),
+              ]
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
 }
 class DB {
-  // Şimdilik buraya sabit yazıyoruz. İleride Giriş Ekranı yapınca burası dinamik değişecek.
-  static const String magazaKodu = "eren_kuyumculuk"; 
+  // Artık sabit değil, boş başlıyor
+  static String magazaKodu = ""; 
 
-  // Mağazaya özel koleksiyonlara ulaşmak için bunu kullanacağız
+  // Uygulama açılırken hafızadan kodu okuyacak fonksiyon
+  static Future<void> baslat() async {
+    final prefs = await SharedPreferences.getInstance();
+    magazaKodu = prefs.getString('magaza_kodu') ?? "";
+  }
+
+  // Giriş yapınca kodu hafızaya kaydedecek fonksiyon
+  static Future<void> girisYap(String kod) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('magaza_kodu', kod);
+    magazaKodu = kod;
+  }
+
+  // Çıkış yapınca hafızayı silecek fonksiyon
+  static Future<void> cikisYap() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('magaza_kodu');
+    magazaKodu = "";
+  }
+
   static CollectionReference ref(String koleksiyonAdi) {
+    if (magazaKodu.isEmpty) throw Exception("Mağaza Kodu Bulunamadı!");
     return FirebaseFirestore.instance
         .collection('magazalar')
         .doc(magazaKodu)
         .collection(koleksiyonAdi);
   }
 
-  // Piyasa verisi TÜM MAĞAZALAR İÇİN ORTAKTIR (Değişmez)
   static DocumentReference piyasaRef() {
     return FirebaseFirestore.instance.collection('piyasa').doc('canli');
   }
 }
-
 // --- 1. RESPONSIVE WRAPPER (ANA İSKELET) ---
 class ResponsiveAnaSablon extends StatelessWidget {
   final Widget child;
@@ -67,36 +247,6 @@ class ResponsiveAnaSablon extends StatelessWidget {
     );
   }
 }
-
-class ErenKuyumculukApp extends StatelessWidget {
-  const ErenKuyumculukApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Bigbos Eren Kuyumculuk',
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1B2631),
-          primary: const Color(0xFF1B2631),
-          secondary: const Color(0xFFD4AF37),
-        ),
-        scaffoldBackgroundColor: const Color(0xFFEDEFF5),
-        inputDecorationTheme: const InputDecorationTheme(
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(),
-          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          isDense: true,
-        ),
-      ),
-      home: const PosScreen(),
-    );
-  }
-}
-
 // --- 2. VERİ MODELİ ---
 class SatisSatiri {
   String id;
@@ -156,7 +306,13 @@ class _PosScreenState extends State<PosScreen> with SingleTickerProviderStateMix
   Map<String, dynamic> _ayarlar = {};
   List<dynamic> _toptanAraliklar = [];
   Map<String, dynamic> _piyasaVerileri = {};
-
+  double _guvenliDouble(dynamic veri, double varsayilan) {
+    if (veri == null) return varsayilan;
+    if (veri is int) return veri.toDouble();
+    if (veri is double) return veri;
+    if (veri is String) return double.tryParse(veri) ?? varsayilan;
+    return varsayilan;
+  }
   // Sepet ve Kontrolcüler
   final List<SatisSatiri> _sepet = [];
   final TextEditingController _hasSatisManuelController = TextEditingController();
@@ -205,6 +361,7 @@ class _PosScreenState extends State<PosScreen> with SingleTickerProviderStateMix
     {'id': 'y_ata5',   'ad': 'ATA BEŞLİ',   'def_has': 33.3500},
     {'id': 'e_ata5',   'ad': 'ESKİ BEŞLİ',  'def_has': 33.1000},
   ];
+  final TextEditingController _hasSatisGramController = TextEditingController(text: "1");
 
   @override
   void initState() {
@@ -400,7 +557,23 @@ double _sepetMaliyetiniBul() {
              double hamHas = (_piyasaVerileri.containsKey(anahtar)) ? (_piyasaVerileri[anahtar] as num).toDouble() : urun['def_has'];
              toplamMaliyet += (hamHas * s.gram * bazAlinacakHasMaliyet); 
           }
-        } else {
+        } else if (s.tur == "has_paket") {
+           // 1. Ayarları Çek (Güvenli Yöntemle)
+           double limit = _guvenliDouble(_ayarlar['paket_satis_limiti'], 20.0);
+           double maliyetCarpan = 0;
+
+           // 2. Gramaja Göre Maliyet Çarpanını Seç
+           if (s.gram >= limit) {
+              maliyetCarpan = _guvenliDouble(_ayarlar['paket_maliyet_yuksek'], 1.002);
+           } else {
+              maliyetCarpan = _guvenliDouble(_ayarlar['paket_maliyet'], 1.01);
+           }
+
+           // 3. Maliyet Hesabı: Gram * MaliyetÇarpanı * AlışKuru
+           // Not: Maliyet her zaman "Has Alış" fiyatı üzerinden hesaplanır (Replacement Cost)
+           toplamMaliyet += (s.gram * maliyetCarpan * bazAlinacakHasMaliyet);
+        }
+        else {
           // --- TAKI / ALYANS MALİYETİ ---
           double maliyetMilyemi = 0.585; 
           
@@ -1151,77 +1324,191 @@ Widget _buildTakiFormu(NumberFormat fmt) {
   }
    // --- ZİYNET SATIŞ IZGARASI (Müşteriye Satış) ---
   // Formül: (Piyasa Has + Makas) * Satış Kuru = YÜKSEK FİYAT
-  Widget _buildZiynetGrid(NumberFormat fmt) {
-    // 1. Canlı Satış Kurunu Al (Ekrandaki inputtan)
+Widget _buildZiynetGrid(NumberFormat fmt) {
+    // 1. Canlı Satış Kurunu Al
     double hasSatisKuru = double.tryParse(_hasSatisManuelController.text) ?? 0;
     
-    // 2. Makası Çek
+    // 2. Ayarları Al
     double sarrafiyeMakas = (_ayarlar['sarrafiye_makas'] ?? 0.02).toDouble(); 
+    
+    // Paket Ayarları
+    double paketStdCarpan = (_ayarlar['paket_satis_carpani'] ?? 1.02).toDouble();
+    double paketYuksekCarpan = (_ayarlar['paket_satis_carpani_yuksek'] ?? 1.005).toDouble();
+    double paketLimit = (_ayarlar['paket_satis_limiti'] ?? 20).toDouble();
 
-    return GridView.builder(
-      padding: const EdgeInsets.all(10),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2, 
-        childAspectRatio: 1.8, 
-        crossAxisSpacing: 8, 
-        mainAxisSpacing: 8
-      ),
-      itemCount: _ziynetTurleri.length,
-      itemBuilder: (context, index) {
-        var urun = _ziynetTurleri[index];
-        
-        // --- CANLI VERİ ---
-        String piyasaKey = "${urun['id']}_satis_has"; 
-        double piyasadanGelenHas = urun['def_has']; // Varsayılan
+    // 3. Has Satış Formu İçin Hesaplama
+    double girilenHasGram = double.tryParse(_hasSatisGramController.text.replaceAll(',', '.')) ?? 0;
+    double hasSatisTutar = 0;
+    double aktifCarpan = paketStdCarpan; // Bilgi amaçlı göstermek için
 
-        if (_piyasaVerileri.containsKey(piyasaKey)) {
-           piyasadanGelenHas = (_piyasaVerileri[piyasaKey] as num).toDouble();
+    if (girilenHasGram > 0 && hasSatisKuru > 0) {
+        // Limit kontrolü: Eğer girilen gram limitin üzerindeyse düşük çarpanı kullan
+        if (girilenHasGram >= paketLimit) {
+            aktifCarpan = paketYuksekCarpan;
+        } else {
+            aktifCarpan = paketStdCarpan;
         }
+        hasSatisTutar = girilenHasGram * hasSatisKuru * aktifCarpan;
+    }
 
-        // SATIŞ HESABI: (Has + Makas) * Satış Kuru
-        // Müşteriye satarken makası EKLYORUZ.
-        double satisBirimFiyat = (piyasadanGelenHas + sarrafiyeMakas) * hasSatisKuru;
-        
-        return Card(
-          elevation: 5,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          // Satış olduğu için Beyaz/Sarımsı kart
-          color: urun['id'].toString().startsWith('y') ? Colors.white : const Color(0xFFFFF8E1),
-          child: InkWell(
-            onTap: () {
-              var mevcut = _sepet.firstWhere((s) => s.tur == "ziynet_${urun['id']}", orElse: () => SatisSatiri(id: "", tur: "", urunAdi: ""));
-              setState(() {
-                if(mevcut.id == "") {
-                   _sepet.add(SatisSatiri(
-                    id: DateTime.now().millisecondsSinceEpoch.toString(),
-                    tur: "ziynet_${urun['id']}", // Normal satış kodu
-                    urunAdi: urun['ad'],
-                    gram: 1,
-                    deger: satisBirimFiyat,
-                    isHurda: false, // BU BİR SATIŞTIR
-                    isManuel: true,
-                  ));
-                } else {
-                  mevcut.gram++;
-                  mevcut.deger = satisBirimFiyat;
-                }
-                _sepetAcik = true;
-              });
-               ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("${urun['ad']} Sepete Eklendi"), duration: const Duration(seconds: 1), backgroundColor: Colors.green));
-            },
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(urun['ad'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87)),
-                  // Satış olduğu için Yeşil Renk
-                  Text(fmt.format(satisBirimFiyat), style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green.shade800)),
-                ],
-              ),
-            ),
+    return Column(
+      children: [
+        // --- YENİ BÖLÜM: PAKETLİ HAS SATIŞ FORMU ---
+        Container(
+          margin: const EdgeInsets.all(10),
+          padding: const EdgeInsets.all(15),
+          decoration: BoxDecoration(
+            color: Colors.amber.shade50,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.amber.shade300)
           ),
-        );
-      },
+          child: Column(
+            children: [
+              const Row(
+                 children: [
+                   Icon(Icons.stars, color: Colors.amber, size: 30),
+                   SizedBox(width: 10),
+                   Text("PAKETLİ HAS SATIŞ", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87)),
+                 ],
+               ),
+               const SizedBox(height: 15),
+               Row(
+                 children: [
+                   Expanded(
+                     flex: 2,
+                     child: TextField(
+                       controller: _hasSatisGramController,
+                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                       decoration: const InputDecoration(
+                         labelText: "Gram Giriniz",
+                         suffixText: "Gr",
+                         fillColor: Colors.white,
+                         prefixIcon: Icon(Icons.scale),
+                         contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 15)
+                       ),
+                       onChanged: (val) { setState(() {}); }, // Her tuşta ekranı yenile ki fiyat değişsin
+                     ),
+                   ),
+                   const SizedBox(width: 15),
+                   Expanded(
+                     flex: 3,
+                     child: Column(
+                       crossAxisAlignment: CrossAxisAlignment.end,
+                       children: [
+                         Text(
+                           "Çarpan: ${aktifCarpan.toStringAsFixed(3)}", 
+                           style: const TextStyle(fontSize: 11, color: Colors.grey)
+                         ),
+                         Text(
+                           fmt.format(hasSatisTutar),
+                           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22, color: Colors.amber.shade900)
+                         ),
+                       ],
+                     ),
+                   )
+                 ],
+               ),
+               const SizedBox(height: 10),
+               SizedBox(
+                 width: double.infinity,
+                 child: ElevatedButton.icon(
+                    onPressed: () {
+                       // SADECE BU KISIM DEĞİŞTİ
+                       if (girilenHasGram > 0) { // Tutar > 0 kontrolü yerine gram kontrolü daha sağlıklı
+                         setState(() {
+                           _sepet.add(SatisSatiri(
+                             id: DateTime.now().millisecondsSinceEpoch.toString(),
+                             tur: "has_paket", // Türü sabitledik ki kolay olsun
+                             urunAdi: "Paket Has Altın", // İsmi sadeleştirdik, gram zaten yanında yazacak
+                             gram: girilenHasGram, // <-- DÜZELTME 1: Gerçek gramı buraya yazdık (Eskiden 1'di)
+                             deger: aktifCarpan,   // <-- DÜZELTME 2: Buraya Çarpanı yazdık (Eskiden Toplam Tutardı)
+                             isManuel: true,
+                             isHurda: false
+                           ));
+                           _sepetAcik = true;
+                           // Gramı sıfırlamıyoruz, seri satış için kalsın
+                         });
+                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Paket Has Sepete Eklendi"), duration: Duration(seconds: 1), backgroundColor: Colors.amber));
+                       }
+                    }, 
+                    icon: const Icon(Icons.add_shopping_cart, color: Colors.black), 
+                    label: const Text("SEPETE EKLE", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
+                  ),
+               )
+            ],
+          ),
+        ),
+
+        const Divider(thickness: 2),
+
+        // --- MEVCUT GRID (ALT TARAFTA DEVAM EDİYOR) ---
+        Expanded(
+          child: GridView.builder(
+            padding: const EdgeInsets.all(10),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2, 
+              childAspectRatio: 1.8, 
+              crossAxisSpacing: 8, 
+              mainAxisSpacing: 8
+            ),
+            itemCount: _ziynetTurleri.length,
+            itemBuilder: (context, index) {
+              var urun = _ziynetTurleri[index];
+              // --- CANLI VERİ ---
+              String piyasaKey = "${urun['id']}_satis_has"; 
+              double piyasadanGelenHas = urun['def_has']; 
+
+              if (_piyasaVerileri.containsKey(piyasaKey)) {
+                 piyasadanGelenHas = (_piyasaVerileri[piyasaKey] as num).toDouble();
+              }
+
+              // SATIŞ HESABI: (Has + Makas) * Satış Kuru
+              double satisBirimFiyat = (piyasadanGelenHas + sarrafiyeMakas) * hasSatisKuru;
+              
+              return Card(
+                elevation: 5,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                color: urun['id'].toString().startsWith('gr_') ? Colors.amber.shade100 : (urun['id'].toString().startsWith('y') ? Colors.white : const Color(0xFFFFF8E1)),
+                child: InkWell(
+                  onTap: () {
+                    // ... (Sepete ekleme kodu aynı kalacak) ...
+                    var mevcut = _sepet.firstWhere((s) => s.tur == "ziynet_${urun['id']}", orElse: () => SatisSatiri(id: "", tur: "", urunAdi: ""));
+                    setState(() {
+                      if(mevcut.id == "") {
+                         _sepet.add(SatisSatiri(
+                          id: DateTime.now().millisecondsSinceEpoch.toString(),
+                          tur: "ziynet_${urun['id']}", 
+                          urunAdi: urun['ad'],
+                          gram: 1,
+                          deger: satisBirimFiyat,
+                          isHurda: false, 
+                          isManuel: true,
+                        ));
+                      } else {
+                        mevcut.gram++;
+                        mevcut.deger = satisBirimFiyat;
+                      }
+                      _sepetAcik = true;
+                    });
+                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("${urun['ad']} Sepete Eklendi"), duration: const Duration(seconds: 1), backgroundColor: Colors.green));
+                  },
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(urun['ad'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87)),
+                        Text(fmt.format(satisBirimFiyat), style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green.shade800)),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
      // --- HURDA ALIŞ EKRANI (Müşteriden Alış) ---
@@ -1758,6 +2045,22 @@ Future<void> _satisiTamamla(String odemeTipi) async {
                detayBilgi = "Hurda";
             } else {
                // --- SATIŞ DETAYLARI ---
+               if (s.tur == "has_paket") {
+                  double limit = _guvenliDouble(_ayarlar['paket_satis_limiti'], 20.0);
+                  double maliyetCarpan = (s.gram >= limit) 
+                      ? _guvenliDouble(_ayarlar['paket_maliyet_yuksek'], 1.002)
+                      : _guvenliDouble(_ayarlar['paket_maliyet'], 1.01);
+                  
+                  // Satış Müşteri Tutarı (Zaten hesaplanmış geliyor ama netleştirelim)
+                  // s.deger burada SATIŞ Çarpanıdır.
+                  satirMusteriTutari = s.gram * s.deger * satisHasFiyat; 
+                  
+                  // Gerçek Maliyet
+                  satirGercekMaliyet = s.gram * maliyetCarpan * alisHasFiyat;
+                  
+                  satirMaliyetHas = s.gram * maliyetCarpan; // Has maliyeti
+                  detayBilgi = "Paket Has (Maliyet: $maliyetCarpan)";
+               }
                // Takı & Alyans Maliyeti
                double mly = 0.585;
                if(s.tur.startsWith("b22")) mly = cost22;
@@ -1872,10 +2175,22 @@ class _AdminPanelState extends State<AdminPanel> {
   final TextEditingController _maxFactorCtrl = TextEditingController();
   final TextEditingController _costWeddingPlainCtrl = TextEditingController(); // Düz Alyans Maliyet
   final TextEditingController _costWeddingPatternCtrl = TextEditingController(); // Kalemli Alyans Maliyet
+  final TextEditingController _paketCarpanCtrl = TextEditingController();       // Düşük gramaj çarpanı
+  final TextEditingController _paketYuksekCarpanCtrl = TextEditingController(); // Yüksek gramaj çarpanı
+  final TextEditingController _paketLimitCtrl = TextEditingController();
+  final TextEditingController _paketMaliyetCtrl = TextEditingController();       // Düşük gr alış maliyeti (Örn: 1.01)
+  final TextEditingController _paketYuksekMaliyetCtrl = TextEditingController();
+
   List<Map<String, dynamic>> _dinamikHurdaListesi = [];
   List<Map<String, dynamic>> _toptanListesi = [];
   List<String> _personelListesi = [];
-
+  double _guvenliDouble(dynamic veri, double varsayilan) {
+    if (veri == null) return varsayilan;
+    if (veri is int) return veri.toDouble();
+    if (veri is double) return veri;
+    if (veri is String) return double.tryParse(veri) ?? varsayilan;
+    return varsayilan;
+  }
   @override
   void initState() {
     super.initState();
@@ -1886,7 +2201,11 @@ class _AdminPanelState extends State<AdminPanel> {
           _firmaAdiCtrl.text = data['firma_adi'] ?? "Default";
           _adminPinCtrl.text = data['admin_pin'] ?? "1234"; 
           _sarrafiyeMakasController.text = (data['sarrafiye_makas'] ?? 0.02).toString();
-          
+          _paketCarpanCtrl.text = (data['paket_satis_carpani'] ?? 1.005).toString(); 
+          _paketYuksekCarpanCtrl.text = (data['paket_satis_carpani_yuksek'] ?? 1.002).toString(); 
+          _paketLimitCtrl.text = (data['paket_satis_limiti'] ?? 20).toString(); 
+          _paketMaliyetCtrl.text = (data['paket_maliyet'] ?? 0.999).toString(); 
+          _paketYuksekMaliyetCtrl.text = (data['paket_maliyet_yuksek'] ?? 0.997).toString();
           _ccSingleController.text = (data['cc_single_rate'] ?? 7).toString();
           _ccInstallController.text = (data['cc_install_rate'] ?? 12).toString();
           _limitAjdaCtrl.text = (data['limit_b22_ajda'] ?? 0.926).toString();
@@ -1966,7 +2285,11 @@ class _AdminPanelState extends State<AdminPanel> {
       DB.ref('ayarlar').doc('genel').set({
         'firma_adi': _firmaAdiCtrl.text,
         'admin_pin': _adminPinCtrl.text,
-        
+        'paket_satis_carpani': double.parse(_paketCarpanCtrl.text.replaceAll(',', '.')),
+        'paket_satis_carpani_yuksek': double.parse(_paketYuksekCarpanCtrl.text.replaceAll(',', '.')),
+        'paket_satis_limiti': double.parse(_paketLimitCtrl.text.replaceAll(',', '.')),
+        'paket_maliyet': double.parse(_paketMaliyetCtrl.text.replaceAll(',', '.')),
+        'paket_maliyet_yuksek': double.parse(_paketYuksekMaliyetCtrl.text.replaceAll(',', '.')),
         'sarrafiye_makas': double.parse(_sarrafiyeMakasController.text.replaceAll(',', '.')),
         'cost_wedding_plain': double.parse(_costWeddingPlainCtrl.text.replaceAll(',', '.')),
         'cost_wedding_pattern': double.parse(_costWeddingPatternCtrl.text.replaceAll(',', '.')),
@@ -2116,6 +2439,28 @@ class _AdminPanelState extends State<AdminPanel> {
                   const SizedBox(width: 10),
                   Expanded(child: _buildInput("Ajda / Burma Bilezik", _b22AjdaCtrl)),
               ]),
+              const SizedBox(height: 25),
+              const Text("PAKETLİ HAS / GRAM ALTIN AYARLARI", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.amber)),
+              const Divider(),
+              
+              const Text("Standart Gramajlar (Limit Altı)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              Row(children: [
+                  Expanded(child: _buildInput("Satış Çarpanı (Örn: 1.02)", _paketCarpanCtrl, color: Colors.green)),
+                  const SizedBox(width: 10),
+                  Expanded(child: _buildInput("Maliyet Çarpanı (Örn: 1.01)", _paketMaliyetCtrl, color: Colors.red)),
+              ]),
+              
+              const SizedBox(height: 10),
+              _buildInput("Yüksek Gram Limiti (Gr)", _paketLimitCtrl),
+              const SizedBox(height: 10),
+
+              const Text("Yüksek Gramajlar (Limit Üstü)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              Row(children: [
+                  Expanded(child: _buildInput("Yük. Satış Çarpanı (1.005)", _paketYuksekCarpanCtrl, color: Colors.green)),
+                  const SizedBox(width: 10),
+                  Expanded(child: _buildInput("Yük. Maliyet Çarpanı (1.002)", _paketYuksekMaliyetCtrl, color: Colors.red)),
+              ]),
+              const Text("Not: Limit gramın üzerindeki satışlarda 'Yüksek Gr Çarpanı' devreye girer.", style: TextStyle(fontSize: 11, color: Colors.grey)),
               _buildInput("22 Ayar Takı (İşçilikli)", _b22TakiCtrl), 
               const SizedBox(height: 25),
               const SizedBox(height: 10),
@@ -2217,7 +2562,23 @@ class _AdminPanelState extends State<AdminPanel> {
               )).toList()),
 
               const SizedBox(height: 30),
-              SizedBox(width: double.infinity, child: ElevatedButton(onPressed: _kaydet, style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white, padding: const EdgeInsets.all(15)), child: const Text("TÜMÜNÜ KAYDET")))
+              SizedBox(width: double.infinity, child: ElevatedButton(onPressed: _kaydet, style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white, padding: const EdgeInsets.all(15)), child: const Text("TÜMÜNÜ KAYDET"))
+              
+              ),
+              const SizedBox(height: 20),
+              
+              // ÇIKIŞ BUTONU
+              TextButton.icon(
+                onPressed: () async {
+                  await DB.cikisYap();
+                  // Uygulamayı en başa (Login ekranına) at
+                  Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (c) => const LoginScreen()), (route) => false);
+                }, 
+                icon: const Icon(Icons.logout, color: Colors.red), 
+                label: const Text("Oturumu Kapat / Mağaza Değiştir", style: TextStyle(color: Colors.red))
+              ),
+              const SizedBox(height: 20),
+            
             ],
           ),
         ),
@@ -2571,3 +2932,193 @@ class _SatisGecmisiSayfasiState extends State<SatisGecmisiSayfasi> {
     );
   }
 }
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+class _LoginScreenState extends State<LoginScreen> {
+  final TextEditingController _kodController = TextEditingController();
+  final TextEditingController _pinController = TextEditingController(); 
+  bool _yukleniyor = false;
+
+ 
+
+  void _girisYap() async {
+    if (_kodController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Mağaza Kodu Giriniz"), backgroundColor: Colors.red));
+      return;
+    }
+    
+    setState(() => _yukleniyor = true);
+    
+    String girilenKod = _kodController.text.trim().toLowerCase().replaceAll(" ", "_");
+    String girilenPin = _pinController.text.trim();
+
+    try {
+      // 1. Önce Veritabanındaki GİZLİ MASTER KEY'i çekiyoruz
+      String dbMasterKey = "";
+      try {
+        var sysDoc = await FirebaseFirestore.instance.collection('yonetim').doc('lisans_ayarlari').get();
+        if (sysDoc.exists) {
+          dbMasterKey = sysDoc.data()?['master_key'] ?? ""; 
+        }
+      } catch (e) {
+        print("Master key çekilemedi: $e");
+      }
+
+      // 2. Şimdi Mağazayı Kontrol Et
+      var docRef = FirebaseFirestore.instance.collection('magazalar').doc(girilenKod).collection('ayarlar').doc('genel');
+      var doc = await docRef.get();
+
+      bool girisBasarili = false;
+      bool yeniKurulum = false;
+
+      if (doc.exists) {
+        // --- 1. SENARYO: MAĞAZA VAR (Normal Giriş) ---
+        var data = doc.data() as Map<String, dynamic>;
+        String gercekPin = data['admin_pin'] ?? "1234"; 
+
+        // Hem dükkanın kendi şifresiyle, hem de veritabanından gelen Master Key ile girebilirsin
+        if (girilenPin == gercekPin || (dbMasterKey.isNotEmpty && girilenPin == dbMasterKey)) { 
+          girisBasarili = true;
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Hatalı Şifre!"), backgroundColor: Colors.red));
+        }
+      } else {
+        // --- 2. SENARYO: MAĞAZA YOK (Yeni Kayıt) ---
+        
+        // Veritabanından çektiğimiz Master Key doğru girildiyse oluştur
+        if (dbMasterKey.isNotEmpty && girilenPin == dbMasterKey) {
+           yeniKurulum = true;
+           girisBasarili = true;
+           
+           // Yeni mağazayı oluştur
+           await docRef.set({
+             'firma_adi': _kodController.text.toUpperCase(), 
+             'admin_pin': "1234", 
+             'sarrafiye_makas': 0.02,
+             // ... Varsayılan değerler ...
+           });
+           
+           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Yeni Mağaza Lisansı Veritabanına İşlendi!"), backgroundColor: Colors.green));
+        } else {
+           _hataGoster("Mağaza Bulunamadı! Lisans almak için iletişime geçiniz.");
+        }
+      }
+
+      if (girisBasarili) {
+        await DB.girisYap(girilenKod);
+        if (mounted) {
+          Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const PosScreen()));
+        }
+      }
+
+    } catch (e) {
+      _hataGoster("Bağlantı Hatası: $e");
+    } finally {
+      if(mounted) setState(() => _yukleniyor = false);
+    }
+  }
+
+  void _hataGoster(String mesaj) {
+    showDialog(
+      context: context, 
+      builder: (ctx) => AlertDialog(
+        title: const Text("Giriş Başarısız"),
+        content: Text(mesaj),
+        actions: [TextButton(onPressed: ()=>Navigator.pop(ctx), child: const Text("Tamam"))],
+      )
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF1B2631),
+      body: Center(
+        child: SingleChildScrollView(
+          child: Container(
+            padding: const EdgeInsets.all(30),
+            margin: const EdgeInsets.all(20),
+            constraints: const BoxConstraints(maxWidth: 400),
+            decoration: BoxDecoration(
+              color: Colors.white, 
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 5))
+              ]
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.diamond, size: 60, color: Color(0xFFD4AF37)),
+                const SizedBox(height: 10),
+                const Text("BIGBOS POS", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87)),
+                const Text("Kuyumcu Yönetim Sistemi", style: TextStyle(color: Colors.grey)),
+                const SizedBox(height: 30),
+                
+                // MAĞAZA KODU GİRİŞİ
+                TextField(
+                  controller: _kodController,
+                  decoration: const InputDecoration(
+                    labelText: "Mağaza Kodu",
+                    hintText: "Örn: eren_kuyumculuk",
+                    prefixIcon: Icon(Icons.store),
+                    border: OutlineInputBorder(),
+                    filled: true,
+                    fillColor: Colors.white
+                  ),
+                ),
+                const SizedBox(height: 15),
+                
+                // ŞİFRE GİRİŞİ
+                TextField(
+                  controller: _pinController,
+                  obscureText: true,
+                  keyboardType: TextInputType.text, // Master key için text yaptık
+                  decoration: const InputDecoration(
+                    labelText: "Yönetici Şifresi",
+                    hintText: "****",
+                    prefixIcon: Icon(Icons.lock),
+                    border: OutlineInputBorder(),
+                    filled: true,
+                    fillColor: Colors.white
+                  ),
+                ),
+                
+                const SizedBox(height: 20),
+                
+                // GİRİŞ BUTONU
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton(
+                    onPressed: _yukleniyor ? null : _girisYap,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1B2631), 
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
+                    ),
+                    child: _yukleniyor 
+                      ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) 
+                      : const Text("GİRİŞ YAP", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+                
+                const SizedBox(height: 20),
+                
+                // DİPNOT
+                const Text(
+                  "Yeni kurulum için Master Key kullanınız.",
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                  textAlign: TextAlign.center,
+                )
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }}
