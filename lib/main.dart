@@ -522,29 +522,36 @@ class _PosScreenState extends State<PosScreen> with SingleTickerProviderStateMix
   }
 
   // Bir satırın TL karşılığını hesaplar (Satış veya Hurda)
-  double _satirFiyatiHesapla(SatisSatiri satir, double hasFiyat) {
+ double _satirFiyatiHesapla(SatisSatiri satir, double hasFiyat) {
+    double sonuc = 0;
+
+    double guncelAlisFiyati = double.tryParse(_hasAlisManuelController.text.replaceAll(',', '.')) ?? 0;
+
     if (satir.isHurda) {
-       // HURDA İSE: Alış fiyatı üzerinden hesaplanır
+       // HURDA İSE
        if(satir.tur.contains("ziynet")) {
-         return satir.gram * satir.deger; // Adet * Birim Fiyat
+         sonuc = satir.gram * satir.deger; 
        } else {
-         double alisFiyati = _kilitliHasAlis > 0 ? _kilitliHasAlis : _canliHasAlis;
-         return satir.gram * satir.deger * alisFiyati; // Gram * Milyem * Has Alış
+         // --- DEĞİŞİKLİK BURADA: Eski değişken yerine guncelAlisFiyati kullandık ---
+         sonuc = satir.gram * satir.deger * guncelAlisFiyati; 
        }
     }
-    
-    // SATIŞ İSE
-    if (satir.tur.startsWith("ziynet")) {
-      return satir.gram * satir.deger;
-    } 
-    else if (satir.tur.startsWith("wedding")) {
-      return hasFiyat * (satir.gram * 0.585 + satir.deger);
+    else {
+       // SATIŞ İSE
+       if (satir.tur.startsWith("ziynet")) {
+         sonuc = satir.gram * satir.deger;
+       } 
+       else if (satir.tur.startsWith("wedding")) {
+         sonuc = hasFiyat * (satir.gram * 0.585 + satir.deger);
+       }
+       else{
+         sonuc = hasFiyat * satir.gram * satir.deger;
+       } 
     }
-    else{
-      return hasFiyat * satir.gram * satir.deger;
-    } 
+    
+    // --- BURASI EKLENDİ: YUVARLAMA İŞLEMİ ---
+    return sonuc.roundToDouble(); 
   }
-
   // Ziynet satış fiyatını hesaplar
   double _ziynetBirimFiyatHesapla(Map<String, dynamic> urun) {
     String anahtar = "${urun['id']}_satis_has";
@@ -562,7 +569,7 @@ class _PosScreenState extends State<PosScreen> with SingleTickerProviderStateMix
     
     // 1. KURLARI BELİRLE
     // Hurda için ALIŞ kuru lazım (Müşteriye ödenen para)
-    double kurAlis = _kilitliHasAlis > 0 ? _kilitliHasAlis : _canliHasAlis; 
+    double kurAlis = double.tryParse(_hasAlisManuelController.text.replaceAll(',', '.')) ?? 0;
     
     // Satış ürünlerinin maliyeti için SATIŞ kuru lazım (Yerine koyma maliyeti)
     double kurSatis = double.tryParse(_hasSatisManuelController.text) ?? 0;
@@ -705,14 +712,16 @@ class _PosScreenState extends State<PosScreen> with SingleTickerProviderStateMix
     });
   }
 
-  void _hurdaHesapla() {
+ void _hurdaHesapla() {
     double gr = double.tryParse(_hurdaGramController.text.replaceAll(',', '.')) ?? 0;
     double milyem = double.tryParse(_hurdaMilyemController.text.replaceAll(',', '.')) ?? 0;
-    double hasAlis = _kilitliHasAlis > 0 ? _kilitliHasAlis : _canliHasAlis;
+    
+    
+    double hasAlis = double.tryParse(_hasAlisManuelController.text.replaceAll(',', '.')) ?? 0;
     
     if (gr > 0 && milyem > 0 && hasAlis > 0) {
       setState(() {
-        _hurdaAnlikTutar = gr * milyem * hasAlis;
+        _hurdaAnlikTutar = (gr * milyem * hasAlis).roundToDouble();
       });
     } else {
       setState(() => _hurdaAnlikTutar = 0);
@@ -1497,8 +1506,8 @@ Widget _buildZiynetGrid(NumberFormat fmt) {
               if (_piyasaVerileri.containsKey(piyasaKey)) {
                  piyasadanGelenHas = (_piyasaVerileri[piyasaKey] as num).toDouble();
               }
-
-              double satisBirimFiyat = (piyasadanGelenHas + sarrafiyeMakas) * hasSatisKuru;
+              double hamSatisBirimFiyat = (piyasadanGelenHas + sarrafiyeMakas) * hasSatisKuru;
+              double satisBirimFiyat = hamSatisBirimFiyat.roundToDouble();
               
               return Card(
                 elevation: 5,
@@ -1545,7 +1554,7 @@ Widget _buildZiynetGrid(NumberFormat fmt) {
   }  // --- HURDA ALIŞ EKRANI (Müşteriden Alış) ---
   // Formül: (Piyasa Has - Makas) * Alış Kuru = DÜŞÜK FİYAT
   Widget _buildHurdaFormu(NumberFormat fmt) {
-    double hasAlisFiyati = _kilitliHasAlis > 0 ? _kilitliHasAlis : _canliHasAlis;
+    double hasAlisFiyati = double.tryParse(_hasAlisManuelController.text.replaceAll(',', '.')) ?? 0;
     double sarrafiyeMakas = (_ayarlar['sarrafiye_makas'] ?? 0.02).toDouble(); 
 
     return SingleChildScrollView(
@@ -1960,20 +1969,20 @@ Widget _buildZiynetGrid(NumberFormat fmt) {
       }
     );
   }
-  
+
 Future<void> _satisiTamamla(String odemeTipi) async {
     if (_secilenPersonel == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lütfen Personel Seçin!"), backgroundColor: Colors.red));
       return;
     }
-    Navigator.pop(context); // Menüyü kapat
+    Navigator.pop(context);
 
     // 1. Ayarlar ve Kurlar
     double satisOrani = (odemeTipi == "Tek Çekim") ? _guvenliDouble(_ayarlar['cc_single_rate'], 0) : (odemeTipi == "3 Taksit" ? _guvenliDouble(_ayarlar['cc_install_rate'], 0) : 0);
     double bankaMaliyetOrani = (odemeTipi == "Tek Çekim") ? _guvenliDouble(_ayarlar['pos_cost_single'], 0) : (odemeTipi == "3 Taksit" ? _guvenliDouble(_ayarlar['pos_cost_install'], 0) : 0);
     
     double satisHasFiyat = double.tryParse(_hasSatisManuelController.text) ?? 0;
-    double alisHasFiyat = _kilitliHasAlis > 0 ? _kilitliHasAlis : _canliHasAlis;
+    double alisHasFiyat = double.tryParse(_hasAlisManuelController.text.replaceAll(',', '.')) ?? 0; 
 
     // 2. Kasa Tutarları (YENİ FORMÜL: TERS HESAP)
     double hamSatisTutari = _toplamNakit; 
@@ -2154,6 +2163,7 @@ Future<void> _satisiTamamla(String odemeTipi) async {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Kayıt sırasında hata oluştu!"), backgroundColor: Colors.red));
     }
   }
+ 
  void _gecmisSatislariGoster(BuildContext context, NumberFormat fmt) {
     Navigator.push(
       context, 
@@ -3005,7 +3015,7 @@ class _LoginScreenState extends State<LoginScreen> {
               children: [
                 const Icon(Icons.diamond, size: 60, color: Color(0xFFD4AF37)),
                 const SizedBox(height: 10),
-                const Text("BIGBOS POS", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87)),
+                const Text("UZMAN KUYUMCU", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87)),
                 const Text("Kuyumcu Yönetim Sistemi", style: TextStyle(color: Colors.grey)),
                 const SizedBox(height: 30),
                 
@@ -3014,7 +3024,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   controller: _kodController,
                   decoration: const InputDecoration(
                     labelText: "Mağaza Kodu",
-                    hintText: "Örn: eren_kuyumculuk",
+                    hintText: "Örn: magaza_adi",
                     prefixIcon: Icon(Icons.store),
                     border: OutlineInputBorder(),
                     filled: true,
