@@ -39,7 +39,7 @@ options.add_argument("--password-store=basic")
 options.add_argument("--window-size=1280,800")
 
 try:
-    driver = uc.Chrome(options=options, use_subprocess=True)
+    driver = uc.Chrome(options=options, use_subprocess=True, version_main=143)
 except Exception as e:
     print(f"\nChrome açılırken hata oluştu: {e}")
     input("Kapatmak için Enter'a basın...")

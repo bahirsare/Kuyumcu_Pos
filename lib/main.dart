@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-
+import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -11,10 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  print("🔥🔥🔥 HAFIZA SİLİNİYOR... 🔥🔥🔥");
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.clear(); 
-  print("🔥🔥🔥 HAFIZA TERTEMİZ OLDU 🔥🔥🔥");
+  
   runApp(const BaslaticiUygulama());   
 }
 class BaslaticiUygulama extends StatelessWidget {
@@ -55,7 +52,28 @@ class _AcilisEkraniState extends State<AcilisEkrani> {
 Future<void> _guvenliBaslat() async {
     try {
       setState(() => _durum = "Sunucuya Bağlanılıyor...");
-      await Firebase.initializeApp();
+      
+      // --- WEB / MOBİL AYRIMI (BURASI DEĞİŞTİ) ---
+      if (kIsWeb) {
+        // WEB İÇİN BAŞLATMA
+        // Bu bilgileri Firebase Console -> Project Settings -> General -> Your Apps (Web) kısmından alacaksın.
+        await Firebase.initializeApp(
+          options: const FirebaseOptions(
+            apiKey: "AIzaSyBvfN6lu26VOul4R9PiowpIGWkZ4LTrgJM",
+            authDomain: "kuyumcu-75b22.firebaseapp.com",
+            projectId: "kuyumcu-75b22",
+            storageBucket: "kuyumcu-75b22.firebasestorage.app",
+            messagingSenderId: "905664498738",
+            appId: "1:905664498738:web:8540cb5da77e847973c02b",
+            measurementId: "G-14611N1PXZ"
+
+          ),
+        );
+      } else {
+        // MOBİL (ANDROID/IOS) İÇİN BAŞLATMA
+        await Firebase.initializeApp();
+      }
+      // -------------------------------------------
 
       setState(() => _durum = "Kimlik Doğrulanıyor...");
       await DB.baslat(); // Hafızadaki kodu okur
@@ -118,7 +136,7 @@ Future<void> _guvenliBaslat() async {
       });
     }
   }
-   
+  
    @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -538,69 +556,74 @@ class _PosScreenState extends State<PosScreen> with SingleTickerProviderStateMix
 
   
 // Sepetteki SATILAN ürünlerin maliyetini bulur (Kar hesabı için)
-double _sepetMaliyetiniBul() {
+// Sepetteki SATILAN ürünlerin maliyetini bulur (Kar hesabı için)
+  double _sepetMaliyetiniBul() {
     double toplamMaliyet = 0;
-    double bazAlinacakHasMaliyet = _kilitliHasAlis > 0 ? _kilitliHasAlis : _canliHasAlis; 
     
-    double maliyet14 = (_ayarlar['cost_14k'] ?? 0.685).toDouble();
-    double maliyet22 = (_ayarlar['cost_22k'] ?? 1.016).toDouble();
-    double maliyetAlyansDuz = (_ayarlar['cost_wedding_plain'] ?? 0.20).toDouble();
-    double maliyetAlyansKalemli = (_ayarlar['cost_wedding_pattern'] ?? 0.30).toDouble();
+    // 1. KURLARI BELİRLE
+    // Hurda için ALIŞ kuru lazım (Müşteriye ödenen para)
+    double kurAlis = _kilitliHasAlis > 0 ? _kilitliHasAlis : _canliHasAlis; 
+    
+    // Satış ürünlerinin maliyeti için SATIŞ kuru lazım (Yerine koyma maliyeti)
+    double kurSatis = double.tryParse(_hasSatisManuelController.text) ?? 0;
+    // Eğer satış kuru boşsa (0 ise) mecburen alış kurunu kullan (Güvenlik)
+    double aktifMaliyetKuru = (kurSatis > 0) ? kurSatis : kurAlis;
+
+    // Ayarları Çek
+    double maliyet14 = _guvenliDouble(_ayarlar['cost_14k'], 0.685);
+    double maliyet22 = _guvenliDouble(_ayarlar['cost_22k'], 1.016);
+    double maliyetAlyansDuz = _guvenliDouble(_ayarlar['cost_wedding_plain'], 0.20);
+    double maliyetAlyansKalemli = _guvenliDouble(_ayarlar['cost_wedding_pattern'], 0.30);
+
     for(var s in _sepet) {
       if (!s.isHurda) { 
+        // --- SATILAN ÜRÜNLER (Hepsi Satış Kurundan Hesaplanacak) ---
+        
         if(s.tur.startsWith("ziynet")) {
-          // Ziynet Maliyeti (Has * Kur)
-          String turKod = s.tur.replaceAll("ziynet_", "");
-          var urun = _ziynetTurleri.firstWhere((e) => e['id'] == turKod, orElse: () => {});
-          if(urun.isNotEmpty) {
-             String anahtar = "${urun['id']}_satis_has";
-             double hamHas = (_piyasaVerileri.containsKey(anahtar)) ? (_piyasaVerileri[anahtar] as num).toDouble() : urun['def_has'];
-             toplamMaliyet += (hamHas * s.gram * bazAlinacakHasMaliyet); 
-          }
-        } else if (s.tur == "has_paket") {
-           // 1. Ayarları Çek (Güvenli Yöntemle)
-           double limit = _guvenliDouble(_ayarlar['paket_satis_limiti'], 20.0);
-           double maliyetCarpan = 0;
-
-           // 2. Gramaja Göre Maliyet Çarpanını Seç
-           if (s.gram >= limit) {
-              maliyetCarpan = _guvenliDouble(_ayarlar['paket_maliyet_yuksek'], 1.002);
-           } else {
-              maliyetCarpan = _guvenliDouble(_ayarlar['paket_maliyet'], 1.01);
+           // ZİYNET MALİYETİ = Has * Satış Kuru
+           String turKod = s.tur.replaceAll("ziynet_", "");
+           var urun = _ziynetTurleri.firstWhere((e) => e['id'] == turKod, orElse: () => {});
+           if(urun.isNotEmpty) {
+              String anahtar = "${urun['id']}_satis_has";
+              // Piyasadan gelen has değerini al, yoksa varsayılanı kullan
+              double hamHas = (_piyasaVerileri.containsKey(anahtar)) ? (_piyasaVerileri[anahtar] as num).toDouble() : urun['def_has'];
+              
+              toplamMaliyet += (hamHas * s.gram * aktifMaliyetKuru); 
            }
-
-           // 3. Maliyet Hesabı: Gram * MaliyetÇarpanı * AlışKuru
-           // Not: Maliyet her zaman "Has Alış" fiyatı üzerinden hesaplanır (Replacement Cost)
-           toplamMaliyet += (s.gram * maliyetCarpan * bazAlinacakHasMaliyet);
+        } 
+        else if (s.tur == "has_paket") {
+           // PAKET HAS MALİYETİ = Çarpan * Gram * Satış Kuru
+           double limit = _guvenliDouble(_ayarlar['paket_satis_limiti'], 20.0);
+           double maliyetCarpan = (s.gram >= limit) 
+               ? _guvenliDouble(_ayarlar['paket_maliyet_yuksek'], 1.002)
+               : _guvenliDouble(_ayarlar['paket_maliyet'], 1.01);
+           
+           toplamMaliyet += (s.gram * maliyetCarpan * aktifMaliyetKuru);
         }
         else {
-          // --- TAKI / ALYANS MALİYETİ ---
+          // TAKI / ALYANS / BİLEZİK MALİYETİ
           double maliyetMilyemi = 0.585; 
           
           if(s.tur.startsWith("b22") || s.tur == "b22_taki") {
-            maliyetMilyemi = maliyet22; // 22 Ayar (1.016)
+            maliyetMilyemi = maliyet22; 
           } else if(s.tur.startsWith("std_")) {
-            maliyetMilyemi = maliyet14; // Standart 14K (0.685)
+            maliyetMilyemi = maliyet14; 
           } else if(s.tur.startsWith("wedding")) {
-             
-             double sabitIsclikHas = 0;
-             if(s.tur == "wedding_plain") {
-              sabitIsclikHas = maliyetAlyansDuz;
-               }
-             else if(s.tur == "wedding_pattern"){
-              sabitIsclikHas = maliyetAlyansKalemli; 
-             }
-             double urunHasMaliyeti = (s.gram * 0.585) + sabitIsclikHas;
-             toplamMaliyet += (urunHasMaliyeti * bazAlinacakHasMaliyet);
+              double sabitIsclikHas = (s.tur == "wedding_plain") ? maliyetAlyansDuz : maliyetAlyansKalemli;
+              // Alyans Maliyeti: ((Gram * 0.585) + İşçilik) * Satış Kuru
+              double urunHasMaliyeti = (s.gram * 0.585) + sabitIsclikHas;
+              toplamMaliyet += (urunHasMaliyeti * aktifMaliyetKuru); 
+              continue; 
           } 
            
-          toplamMaliyet += (s.gram * maliyetMilyemi * bazAlinacakHasMaliyet);
+          // Standart Takı Maliyeti: Gram * Milyem * Satış Kuru
+          toplamMaliyet += (s.gram * maliyetMilyemi * aktifMaliyetKuru); 
         }
       }
     }
     return toplamMaliyet;
   }
-   // Toplam Sepet Tutarı (Hurda Düşülmüş)
+  // Toplam Sepet Tutarı (Hurda Düşülmüş)
   double get _toplamNakit {
     double hasFiyat = double.tryParse(_hasSatisManuelController.text) ?? 0;
     double toplam = 0;
@@ -636,6 +659,20 @@ double _sepetMaliyetiniBul() {
   }
 
   // --- UI YARDIMCILARI ---
+ double _safeParse(String val) {
+    if (val.isEmpty) return 0;
+    // Önce TL ve boşlukları temizle
+    String temiz = val.replaceAll('₺', '').replaceAll('TL', '').trim();
+    
+    // Eğer virgül varsa (Türkçe format: 64.151,78), noktaları sil, virgülü nokta yap
+    if (temiz.contains(',')) {
+      temiz = temiz.replaceAll('.', '').replaceAll(',', '.');
+    } 
+    // Sadece nokta varsa ve düz sayı ise dokunma
+    
+    return double.tryParse(temiz) ?? 0;
+  }
+
 
   void _miktarDuzenle(SatisSatiri satir) {
     TextEditingController cnt = TextEditingController(text: satir.tur.startsWith("ziynet") ? satir.gram.toInt().toString() : satir.gram.toString());
@@ -738,6 +775,8 @@ void _formHesapla(double gram, double milyem) {
         ],
       ),
     );
+  
+ 
   }
   // --- ANA BUILD ---
  @override
@@ -1325,24 +1364,21 @@ Widget _buildTakiFormu(NumberFormat fmt) {
    // --- ZİYNET SATIŞ IZGARASI (Müşteriye Satış) ---
   // Formül: (Piyasa Has + Makas) * Satış Kuru = YÜKSEK FİYAT
 Widget _buildZiynetGrid(NumberFormat fmt) {
-    // 1. Canlı Satış Kurunu Al
+    // 1. Verileri Hazırla
     double hasSatisKuru = double.tryParse(_hasSatisManuelController.text) ?? 0;
-    
-    // 2. Ayarları Al
-    double sarrafiyeMakas = (_ayarlar['sarrafiye_makas'] ?? 0.02).toDouble(); 
+    double sarrafiyeMakas = _guvenliDouble(_ayarlar['sarrafiye_makas'], 0.02);
     
     // Paket Ayarları
-    double paketStdCarpan = (_ayarlar['paket_satis_carpani'] ?? 1.02).toDouble();
-    double paketYuksekCarpan = (_ayarlar['paket_satis_carpani_yuksek'] ?? 1.005).toDouble();
-    double paketLimit = (_ayarlar['paket_satis_limiti'] ?? 20).toDouble();
+    double paketStdCarpan = _guvenliDouble(_ayarlar['paket_satis_carpani'], 1.02);
+    double paketYuksekCarpan = _guvenliDouble(_ayarlar['paket_satis_carpani_yuksek'], 1.005);
+    double paketLimit = _guvenliDouble(_ayarlar['paket_satis_limiti'], 20.0);
 
-    // 3. Has Satış Formu İçin Hesaplama
+    // Has Satış Hesaplama
     double girilenHasGram = double.tryParse(_hasSatisGramController.text.replaceAll(',', '.')) ?? 0;
     double hasSatisTutar = 0;
-    double aktifCarpan = paketStdCarpan; // Bilgi amaçlı göstermek için
+    double aktifCarpan = paketStdCarpan;
 
     if (girilenHasGram > 0 && hasSatisKuru > 0) {
-        // Limit kontrolü: Eğer girilen gram limitin üzerindeyse düşük çarpanı kullan
         if (girilenHasGram >= paketLimit) {
             aktifCarpan = paketYuksekCarpan;
         } else {
@@ -1351,102 +1387,101 @@ Widget _buildZiynetGrid(NumberFormat fmt) {
         hasSatisTutar = girilenHasGram * hasSatisKuru * aktifCarpan;
     }
 
-    return Column(
-      children: [
-        // --- YENİ BÖLÜM: PAKETLİ HAS SATIŞ FORMU ---
-        Container(
-          margin: const EdgeInsets.all(10),
-          padding: const EdgeInsets.all(15),
-          decoration: BoxDecoration(
-            color: Colors.amber.shade50,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.amber.shade300)
-          ),
-          child: Column(
-            children: [
-              const Row(
-                 children: [
-                   Icon(Icons.stars, color: Colors.amber, size: 30),
-                   SizedBox(width: 10),
-                   Text("PAKETLİ HAS SATIŞ", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87)),
-                 ],
-               ),
-               const SizedBox(height: 15),
-               Row(
-                 children: [
-                   Expanded(
-                     flex: 2,
-                     child: TextField(
-                       controller: _hasSatisGramController,
-                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                       decoration: const InputDecoration(
-                         labelText: "Gram Giriniz",
-                         suffixText: "Gr",
-                         fillColor: Colors.white,
-                         prefixIcon: Icon(Icons.scale),
-                         contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 15)
+    // --- DEĞİŞİKLİK BURADA BAŞLIYOR: SCROLLABLE YAPISI ---
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(bottom: 20), // En alta biraz boşluk
+      child: Column(
+        children: [
+          // 1. PAKETLİ HAS SATIŞ FORMU
+          Container(
+            margin: const EdgeInsets.all(10),
+            padding: const EdgeInsets.all(15),
+            decoration: BoxDecoration(
+              color: Colors.amber.shade50,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.amber.shade300)
+            ),
+            child: Column(
+              children: [
+                const Row(
+                   children: [
+                      Icon(Icons.stars, color: Colors.amber, size: 30),
+                      SizedBox(width: 10),
+                      Text("PAKETLİ HAS SATIŞ", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87)),
+                   ],
+                 ),
+                 const SizedBox(height: 15),
+                 Row(
+                   children: [
+                     Expanded(
+                       flex: 2,
+                       child: TextField(
+                         controller: _hasSatisGramController,
+                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                         decoration: const InputDecoration(
+                           labelText: "Gram",
+                           suffixText: "Gr",
+                           fillColor: Colors.white,
+                           prefixIcon: Icon(Icons.scale),
+                           contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 15)
+                         ),
+                         onChanged: (val) { setState(() {}); },
                        ),
-                       onChanged: (val) { setState(() {}); }, // Her tuşta ekranı yenile ki fiyat değişsin
                      ),
+                     const SizedBox(width: 15),
+                     Expanded(
+                       flex: 3,
+                       child: Column(
+                         crossAxisAlignment: CrossAxisAlignment.end,
+                         children: [
+                          if (!_sunumModu)
+                           Text("Çarpan: ${aktifCarpan.toStringAsFixed(3)}", style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                           
+                           Text(fmt.format(hasSatisTutar), style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22, color: Colors.amber.shade900)),
+                         ],
+                       ),
+                     )
+                   ],
+                 ),
+                 const SizedBox(height: 10),
+                 SizedBox(
+                   width: double.infinity,
+                   child: ElevatedButton.icon(
+                     onPressed: () {
+                        if (girilenHasGram > 0) {
+                          setState(() {
+                            _sepet.add(SatisSatiri(
+                              id: DateTime.now().millisecondsSinceEpoch.toString(),
+                              tur: "has_paket",
+                              urunAdi: "Paket Has Altın",
+                              gram: girilenHasGram,
+                              deger: aktifCarpan,
+                              isManuel: true,
+                              isHurda: false
+                            ));
+                            _sepetAcik = true;
+                            _hasSatisGramController.text="1";
+                          });
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Paket Has Sepete Eklendi"), duration: Duration(seconds: 1), backgroundColor: Colors.amber));
+                        }
+                     }, 
+                     icon: const Icon(Icons.add_shopping_cart, color: Colors.black), 
+                     label: const Text("SEPETE EKLE", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                     style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
                    ),
-                   const SizedBox(width: 15),
-                   Expanded(
-                     flex: 3,
-                     child: Column(
-                       crossAxisAlignment: CrossAxisAlignment.end,
-                       children: [
-                         Text(
-                           "Çarpan: ${aktifCarpan.toStringAsFixed(3)}", 
-                           style: const TextStyle(fontSize: 11, color: Colors.grey)
-                         ),
-                         Text(
-                           fmt.format(hasSatisTutar),
-                           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22, color: Colors.amber.shade900)
-                         ),
-                       ],
-                     ),
-                   )
-                 ],
-               ),
-               const SizedBox(height: 10),
-               SizedBox(
-                 width: double.infinity,
-                 child: ElevatedButton.icon(
-                    onPressed: () {
-                       // SADECE BU KISIM DEĞİŞTİ
-                       if (girilenHasGram > 0) { // Tutar > 0 kontrolü yerine gram kontrolü daha sağlıklı
-                         setState(() {
-                           _sepet.add(SatisSatiri(
-                             id: DateTime.now().millisecondsSinceEpoch.toString(),
-                             tur: "has_paket", // Türü sabitledik ki kolay olsun
-                             urunAdi: "Paket Has Altın", // İsmi sadeleştirdik, gram zaten yanında yazacak
-                             gram: girilenHasGram, // <-- DÜZELTME 1: Gerçek gramı buraya yazdık (Eskiden 1'di)
-                             deger: aktifCarpan,   // <-- DÜZELTME 2: Buraya Çarpanı yazdık (Eskiden Toplam Tutardı)
-                             isManuel: true,
-                             isHurda: false
-                           ));
-                           _sepetAcik = true;
-                           // Gramı sıfırlamıyoruz, seri satış için kalsın
-                         });
-                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Paket Has Sepete Eklendi"), duration: Duration(seconds: 1), backgroundColor: Colors.amber));
-                       }
-                    }, 
-                    icon: const Icon(Icons.add_shopping_cart, color: Colors.black), 
-                    label: const Text("SEPETE EKLE", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
-                  ),
-               )
-            ],
+                 )
+              ],
+            ),
           ),
-        ),
 
-        const Divider(thickness: 2),
+          const Divider(thickness: 2),
 
-        // --- MEVCUT GRID (ALT TARAFTA DEVAM EDİYOR) ---
-        Expanded(
-          child: GridView.builder(
+          // 2. GRID (Artık Expanded değil, ShrinkWrap)
+          GridView.builder(
             padding: const EdgeInsets.all(10),
+            shrinkWrap: true, // BU ÇOK ÖNEMLİ (İçeriği kadar yer kaplar)
+            physics: const NeverScrollableScrollPhysics(), // BU DA ÇOK ÖNEMLİ (Kendi içinde kaymaz, sayfayla kayar)
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2, 
               childAspectRatio: 1.8, 
@@ -1456,7 +1491,6 @@ Widget _buildZiynetGrid(NumberFormat fmt) {
             itemCount: _ziynetTurleri.length,
             itemBuilder: (context, index) {
               var urun = _ziynetTurleri[index];
-              // --- CANLI VERİ ---
               String piyasaKey = "${urun['id']}_satis_has"; 
               double piyasadanGelenHas = urun['def_has']; 
 
@@ -1464,7 +1498,6 @@ Widget _buildZiynetGrid(NumberFormat fmt) {
                  piyasadanGelenHas = (_piyasaVerileri[piyasaKey] as num).toDouble();
               }
 
-              // SATIŞ HESABI: (Has + Makas) * Satış Kuru
               double satisBirimFiyat = (piyasadanGelenHas + sarrafiyeMakas) * hasSatisKuru;
               
               return Card(
@@ -1473,7 +1506,6 @@ Widget _buildZiynetGrid(NumberFormat fmt) {
                 color: urun['id'].toString().startsWith('gr_') ? Colors.amber.shade100 : (urun['id'].toString().startsWith('y') ? Colors.white : const Color(0xFFFFF8E1)),
                 child: InkWell(
                   onTap: () {
-                    // ... (Sepete ekleme kodu aynı kalacak) ...
                     var mevcut = _sepet.firstWhere((s) => s.tur == "ziynet_${urun['id']}", orElse: () => SatisSatiri(id: "", tur: "", urunAdi: ""));
                     setState(() {
                       if(mevcut.id == "") {
@@ -1507,11 +1539,10 @@ Widget _buildZiynetGrid(NumberFormat fmt) {
               );
             },
           ),
-        ),
-      ],
+        ],
+      ),
     );
-  }
-     // --- HURDA ALIŞ EKRANI (Müşteriden Alış) ---
+  }  // --- HURDA ALIŞ EKRANI (Müşteriden Alış) ---
   // Formül: (Piyasa Has - Makas) * Alış Kuru = DÜŞÜK FİYAT
   Widget _buildHurdaFormu(NumberFormat fmt) {
     double hasAlisFiyati = _kilitliHasAlis > 0 ? _kilitliHasAlis : _canliHasAlis;
@@ -1522,10 +1553,7 @@ Widget _buildZiynetGrid(NumberFormat fmt) {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-           // ... (Üstteki Manuel Giriş Kısımları Aynen Kalıyor) ...
-           // Burası senin kodundaki Dropdown ve Input alanları. 
-           // Onları silmene gerek yok, sadece GridView kısmını aşağıdakine göre güncellemen yeterli.
-           // Ama garanti olsun diye tüm fonksiyonu veriyorum:
+          
 
           Container(
             width: double.infinity,
@@ -1561,9 +1589,10 @@ Widget _buildZiynetGrid(NumberFormat fmt) {
                     const SizedBox(height: 15),
                     Row(children: [
                         Expanded(child: TextField(controller: _hurdaGramController, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: "Gram", suffixText: "gr", prefixIcon: Icon(Icons.scale, color: Colors.red)), onChanged: (v) => _hurdaHesapla())),
+                        if (!_sunumModu) ...[
                         const SizedBox(width: 15),
                         Expanded(child: TextField(controller: _hurdaMilyemController, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: "Milyem", prefixIcon: Icon(Icons.analytics, color: Colors.red)), onChanged: (v) => _hurdaHesapla())),
-                    ]),
+                    ]]),
                     const SizedBox(height: 15),
                     if (_hurdaAnlikTutar > 0) Container(width: double.infinity, padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.red.shade100, borderRadius: BorderRadius.circular(8)), child: Column(children: [const Text("ÖDENECEK TUTAR", style: TextStyle(fontSize: 10, color: Colors.red)), Text(fmt.format(_hurdaAnlikTutar), style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.red))])),
                     const SizedBox(height: 15),
@@ -1587,7 +1616,7 @@ Widget _buildZiynetGrid(NumberFormat fmt) {
           const Text("SARRAFİYE BOZUM (ALIŞ)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87)),
           const Divider(),
 
-          // --- İŞTE GÜNCELLENEN ALIŞ IZGARASI BURASI ---
+          
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
@@ -1665,11 +1694,11 @@ Widget _buildZiynetGrid(NumberFormat fmt) {
     double hamNakit = _toplamNakit;
     double hamEski = _eskiToplamNakit;
 
-    double guncelTutar = hamNakit * (1 + (oran / 100));
+   double guncelTutar = (oran < 100) ? (hamNakit / (1 - (oran / 100))) : hamNakit;
+    
     double? eskiTutar;
-
     if (hamEski > hamNakit + 1) {
-       eskiTutar = hamEski * (1 + (oran / 100));
+       eskiTutar = (oran < 100) ? (hamEski / (1 - (oran / 100))) : hamEski;
     }
 
     return Expanded(
@@ -1925,219 +1954,206 @@ Widget _buildZiynetGrid(NumberFormat fmt) {
                 ),
               ),
               
-              const SizedBox(height: 15),
-              TextButton.icon(onPressed: () => _fisYazdir(fmt), icon: const Icon(Icons.print), label: const Text("FİŞ ÖNİZLEME"))
             ]),
           );
         });
       }
     );
   }
+  
 Future<void> _satisiTamamla(String odemeTipi) async {
-    if (_secilenPersonel == null) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lütfen Personel Seçin!"), backgroundColor: Colors.red)); return; }
-    Navigator.pop(context); 
+    if (_secilenPersonel == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lütfen Personel Seçin!"), backgroundColor: Colors.red));
+      return;
+    }
+    Navigator.pop(context); // Menüyü kapat
 
-    // 1. Ayarlar
-    double satisOrani = (odemeTipi == "Tek Çekim") ? (_ayarlar['cc_single_rate'] ?? 0).toDouble() : (odemeTipi == "3 Taksit" ? (_ayarlar['cc_install_rate'] ?? 0).toDouble() : 0);
-    double bankaMaliyetOrani = (odemeTipi == "Tek Çekim") ? (_ayarlar['pos_cost_single'] ?? 0).toDouble() : (odemeTipi == "3 Taksit" ? (_ayarlar['pos_cost_install'] ?? 0).toDouble() : 0);
+    // 1. Ayarlar ve Kurlar
+    double satisOrani = (odemeTipi == "Tek Çekim") ? _guvenliDouble(_ayarlar['cc_single_rate'], 0) : (odemeTipi == "3 Taksit" ? _guvenliDouble(_ayarlar['cc_install_rate'], 0) : 0);
+    double bankaMaliyetOrani = (odemeTipi == "Tek Çekim") ? _guvenliDouble(_ayarlar['pos_cost_single'], 0) : (odemeTipi == "3 Taksit" ? _guvenliDouble(_ayarlar['pos_cost_install'], 0) : 0);
     
     double satisHasFiyat = double.tryParse(_hasSatisManuelController.text) ?? 0;
     double alisHasFiyat = _kilitliHasAlis > 0 ? _kilitliHasAlis : _canliHasAlis;
 
-    // 2. Kasa Tutarları
+    // 2. Kasa Tutarları (YENİ FORMÜL: TERS HESAP)
     double hamSatisTutari = _toplamNakit; 
-    double tahsilEdilenTutar = hamSatisTutari * (1 + (satisOrani / 100)); 
+    // Banka komisyonu düşülünce elimize tam para geçsin diye baştan ekliyoruz:
+    double tahsilEdilenTutar = (satisOrani < 100) ? (hamSatisTutari / (1 - (satisOrani / 100))) : hamSatisTutari;
+
     double bankaKomisyonTutari = tahsilEdilenTutar * (bankaMaliyetOrani / 100);
     double netEleGecen = tahsilEdilenTutar - bankaKomisyonTutari;
 
-    // 3. KAR VE MALİYET HESABI
-    double satisUrunMaliyeti = _sepetMaliyetiniBul(); 
-    double toplamHurdaKari = 0;
-    double sadeceSatisCirosu = 0;
+    // Maliyet Ayarlarını Çek
+    double cost14 = _guvenliDouble(_ayarlar['cost_14k'], 0.685);
+    double cost22 = _guvenliDouble(_ayarlar['cost_22k'], 1.016);
+    double costWPlain = _guvenliDouble(_ayarlar['cost_wedding_plain'], 0.20);
+    double costWPattern = _guvenliDouble(_ayarlar['cost_wedding_pattern'], 0.30);
 
-    for (var s in _sepet) {
-      if (s.isHurda) {
-        // --- HURDA KARI HESABI ---
-        if(s.tur.contains("ziynet")) {
-           String turKod = s.tur.replaceAll("hurda_ziynet_", "");
-           var urun = _ziynetTurleri.firstWhere((e) => e['id'] == turKod, orElse: () => {});
-           if(urun.isNotEmpty) {
-              double defHas = (urun['def_has'] as num).toDouble();
-              double gercekDeger = s.gram * defHas * alisHasFiyat; // Atölye Değeri
-              double odenen = s.gram * s.deger; // Müşteriye Ödenen
-              toplamHurdaKari += (gercekDeger - odenen);
-           }
-        } else {
-           String safTurAdi = s.tur.replaceFirst("hurda_", ""); 
-           if (_hurdaHasMilyemleri.containsKey(safTurAdi)) {
-              double gercekHasMilyem = _hurdaHasMilyemleri[safTurAdi]!;
-              double buSatirKari = s.gram * (gercekHasMilyem - s.deger) * alisHasFiyat;
-              toplamHurdaKari += buSatirKari;
-           }
-        }
-      } else {
-        // SATIŞ CİROSU
-        if(s.tur.contains("ziynet")) {
-           sadeceSatisCirosu += s.gram * s.deger;
-        } else {
-           if(s.tur.startsWith("wedding")) {
-              sadeceSatisCirosu += satisHasFiyat * ((s.gram * 0.585) + s.deger);
-           } else {
-              sadeceSatisCirosu += s.gram * s.deger * satisHasFiyat;
-           }
-        }
-      }
-    }
-
-    double sadeceSatisKari = sadeceSatisCirosu - satisUrunMaliyeti;
-    double vadeFarkiGeliri = hamSatisTutari > 0 ? (hamSatisTutari * (satisOrani / 100)) : 0; 
-    double netKar = sadeceSatisKari + toplamHurdaKari + vadeFarkiGeliri - bankaKomisyonTutari;
-
-    // Maliyet Ayarları
-    double cost14 = (_ayarlar['cost_14k'] ?? 0.685).toDouble();
-    double cost22 = (_ayarlar['cost_22k'] ?? 1.016).toDouble();
-    double costWPlain = (_ayarlar['cost_wedding_plain'] ?? 0.20).toDouble();
-    double costWPattern = (_ayarlar['cost_wedding_pattern'] ?? 0.30).toDouble();
+    // 3. DETAYLI KAR VE MALİYET HESABI
+    double toplamNetKar = 0; 
+    double vadeFarkiGeliri = hamSatisTutari > 0 ? (hamSatisTutari * (satisOrani / 100)) : 0; // Vade farkı aslında bir kardır
 
     try {
-      await DB.ref('satis_gecmisi').add({
-        'tarih': FieldValue.serverTimestamp(), 
-        'personel': _secilenPersonel, 
-        'tutar': tahsilEdilenTutar, 
+      // Veritabanına gidecek veri paketini hazırlıyoruz
+      Map<String, dynamic> satisVerisi = {
+        'tarih': DateTime.now(), // Yazdırma hatası olmasın diye DateTime
+        'personel': _secilenPersonel,
+        'tutar': tahsilEdilenTutar,
         'net_ele_gecen': netEleGecen,
         'ham_tutar': hamSatisTutari,
         'vade_farki_geliri': vadeFarkiGeliri,
-        'urun_satis_kari': sadeceSatisKari + toplamHurdaKari, 
-        'pos_gideri': bankaKomisyonTutari, 
-        'kar': netKar, 
-        'odeme_tipi': odemeTipi, 
+        'pos_gideri': bankaKomisyonTutari,
+        'odeme_tipi': odemeTipi,
         'has_fiyat': satisHasFiyat,
         
+        // --- İŞTE DÜZELTİLEN KISIM: ÜRÜNLERİ MAPLERKEN MALİYETİ HESAPLIYORUZ ---
         'urunler': _sepet.map((s) {
-            double satirMusteriTutari = 0; // Müşteriden alınan veya ödenen
-            double satirGercekMaliyet = 0; // Bizim cebimizden çıkan veya malın gerçek değeri
-            double satirMaliyetHas = 0;
+            double satirSatisFiyati = 0; // Müşteriden alınan
+            double satirMaliyet = 0;     // Yerine koyma maliyeti
             String detayBilgi = "";
 
+            // --- A) HURDA İŞLEMİ ---
             if(s.isHurda) {
-               // --- HURDA DETAYLARI (DÜZELTİLDİ) ---
-               // 1. Müşteriye Ödenen (s.deger = Alış Fiyatı/Milyemi)
-               if(s.tur.contains("ziynet")) satirMusteriTutari = s.gram * s.deger;
-               else satirMusteriTutari = s.gram * s.deger * alisHasFiyat;
-               
-               // 2. Gerçek Değeri (Maliyet Hanesine bunu yazacağız)
                if(s.tur.contains("ziynet")) {
+                  // Hurda Ziynet
+                  satirSatisFiyati = s.gram * s.deger; // Müşteriye ödenen (Adet * Fiyat)
+                  
                   String turKod = s.tur.replaceAll("hurda_ziynet_", "");
                   var urun = _ziynetTurleri.firstWhere((e) => e['id'] == turKod, orElse: () => {});
                   if(urun.isNotEmpty) {
                      double defHas = (urun['def_has'] as num).toDouble();
-                     satirGercekMaliyet = s.gram * defHas * alisHasFiyat;
-                     satirMaliyetHas = s.gram * defHas;
+                     satirMaliyet = s.gram * defHas * alisHasFiyat; // Gerçek Değeri (Alış Kuruyla)
                   }
                } else {
+                  // Hurda Takı / Has
+                  satirSatisFiyati = s.gram * s.deger * alisHasFiyat; // Müşteriye ödenen
+                  
                   String safTurAdi = s.tur.replaceFirst("hurda_", ""); 
                   if (_hurdaHasMilyemleri.containsKey(safTurAdi)) {
                      double gercekHasMilyem = _hurdaHasMilyemleri[safTurAdi]!;
-                     satirGercekMaliyet = s.gram * gercekHasMilyem * alisHasFiyat;
-                     satirMaliyetHas = s.gram * gercekHasMilyem;
+                     satirMaliyet = s.gram * gercekHasMilyem * alisHasFiyat; // Gerçek Değeri
                   }
                }
-               detayBilgi = "Hurda";
-            } else {
-               // --- SATIŞ DETAYLARI ---
-               if (s.tur == "has_paket") {
+               // Hurda Karı = (Gerçek Değer - Ödenen)
+               toplamNetKar += (satirMaliyet - satirSatisFiyati);
+               detayBilgi = "Hurda Alış";
+            } 
+            
+            // --- B) SATIŞ İŞLEMİ ---
+            else {
+               // 1. ZİYNET
+               if(s.tur.startsWith("ziynet")) {
+                   String turKod = s.tur.replaceAll("ziynet_", "");
+                   var urun = _ziynetTurleri.firstWhere((e) => e['id'] == turKod, orElse: () => {});
+                   if(urun.isNotEmpty) {
+                      String anahtar = "${urun['id']}_satis_has";
+                      double defHas = (_piyasaVerileri.containsKey(anahtar)) ? (_piyasaVerileri[anahtar] as num).toDouble() : urun['def_has'];
+                      
+                      satirSatisFiyati = s.gram * s.deger; // Kasaya Giren
+                      satirMaliyet = s.gram * defHas * satisHasFiyat; // Maliyet (Satış Kurundan)
+                      
+                      detayBilgi = "Ziynet (Has: $defHas)";
+                   }
+               }
+               
+               // 2. PAKET HAS (Özel İstek)
+               else if (s.tur == "has_paket") {
                   double limit = _guvenliDouble(_ayarlar['paket_satis_limiti'], 20.0);
                   double maliyetCarpan = (s.gram >= limit) 
                       ? _guvenliDouble(_ayarlar['paket_maliyet_yuksek'], 1.002)
                       : _guvenliDouble(_ayarlar['paket_maliyet'], 1.01);
                   
-                  // Satış Müşteri Tutarı (Zaten hesaplanmış geliyor ama netleştirelim)
-                  // s.deger burada SATIŞ Çarpanıdır.
-                  satirMusteriTutari = s.gram * s.deger * satisHasFiyat; 
+                  satirSatisFiyati = s.gram * s.deger * satisHasFiyat; // Satış
+                  satirMaliyet = s.gram * maliyetCarpan * satisHasFiyat; // Maliyet
                   
-                  // Gerçek Maliyet
-                  satirGercekMaliyet = s.gram * maliyetCarpan * alisHasFiyat;
-                  
-                  satirMaliyetHas = s.gram * maliyetCarpan; // Has maliyeti
-                  detayBilgi = "Paket Has (Maliyet: $maliyetCarpan)";
+                  detayBilgi = "Paket (Mal: $maliyetCarpan)";
                }
-               // Takı & Alyans Maliyeti
-               double mly = 0.585;
-               if(s.tur.startsWith("b22")) mly = cost22;
-               else if(s.tur.startsWith("std_")) mly = cost14;
-               else if(s.tur == "wedding_plain") { mly = 0.585; detayBilgi="Düz Alyans +$costWPlain"; }
-               else if(s.tur == "wedding_pattern") { mly = 0.585; detayBilgi="Kalemli Alyans +$costWPattern"; }
-               else detayBilgi = "${s.deger.toStringAsFixed(3)} Milyem";
                
-               // Alyans özel satış fiyatı
-               if(s.tur.startsWith("wedding")) {
-                  satirMusteriTutari = satisHasFiyat * ((s.gram * 0.585) + s.deger);
-                  // Alyansta maliyete işçilik ekliyoruz
-                  double isclik = (s.tur == "wedding_plain") ? costWPlain : costWPattern;
-                  satirGercekMaliyet = ((s.gram * 0.585) + isclik) * alisHasFiyat;
-               } else {
-                  // Normal Satış
-                  satirMusteriTutari = _satirFiyatiHesapla(s, satisHasFiyat);
-                  satirGercekMaliyet = s.gram * mly * alisHasFiyat;
+               // 3. TAKI & ALYANS
+               else {
+                  double mly = 0.585;
+                  double sabitIsclik = 0;
+
+                  if(s.tur.startsWith("b22")) mly = cost22;
+                  else if(s.tur.startsWith("std_")) mly = cost14;
+                  else if(s.tur == "wedding_plain") { mly = 0.585; sabitIsclik = costWPlain; detayBilgi="Düz Alyans"; }
+                  else if(s.tur == "wedding_pattern") { mly = 0.585; sabitIsclik = costWPattern; detayBilgi="Kalemli Alyans"; }
+                  else detayBilgi = "${s.deger.toStringAsFixed(3)} Milyem";
+                  
+                  if(s.tur.startsWith("wedding")) {
+                     satirSatisFiyati = satisHasFiyat * ((s.gram * 0.585) + s.deger);
+                     satirMaliyet = ((s.gram * 0.585) + sabitIsclik) * satisHasFiyat;
+                  } else {
+                     if (s.tur.startsWith("ziynet")) satirSatisFiyati = s.gram * s.deger; // Güvenlik
+                     else satirSatisFiyati = _satirFiyatiHesapla(s, satisHasFiyat);
+                     
+                     satirMaliyet = s.gram * mly * satisHasFiyat;
+                  }
                }
-               satirMaliyetHas = s.gram * mly;
+               // Satış Karı = (Satılan - Maliyet)
+               toplamNetKar += (satirSatisFiyati - satirMaliyet);
             }
 
+            // Listeye yazılacak format (VERİTABANI İÇİN)
             String miktar = s.tur.contains("ziynet") ? "${s.gram.toInt()} Ad" : "${s.gram} Gr";
-            double satilanHasKarsiligi = (satisHasFiyat > 0) ? (satirMusteriTutari / satisHasFiyat) : 0;
             
-            // Format: Ad | Miktar | MüşteriTutarı | GerçekDeğer(Maliyet) | HasMaliyet | HasSatış | Detay
-            return "${s.urunAdi} | $miktar | ${satirMusteriTutari.toStringAsFixed(2)} | ${satirGercekMaliyet.toStringAsFixed(2)} | ${satirMaliyetHas.toStringAsFixed(3)} | ${satilanHasKarsiligi.toStringAsFixed(3)} | $detayBilgi";
+            // Format: Ad | Miktar | MüşteriTutarı | GerçekDeğer(Maliyet) | ...
+            return "${s.urunAdi} | $miktar | ${satirSatisFiyati.toStringAsFixed(2)} | ${satirMaliyet.toStringAsFixed(2)} | 0 | 0 | $detayBilgi";
         }).toList(),
-      });
+      };
+
+      // Toplam Karı Veriye Ekle (Vade farkı ve banka kesintisini de hesaba katıyoruz)
+      double finalKar = toplamNetKar + vadeFarkiGeliri - bankaKomisyonTutari;
+      satisVerisi['kar'] = finalKar;
+      satisVerisi['urun_satis_kari'] = toplamNetKar;
+
+      // Veritabanına kaydet
+      await DB.ref('satis_gecmisi').add(satisVerisi);
       
+      // Sepeti Temizle
       setState(() { _sepet.clear(); _secilenPersonel = null; _sepetAcik = false; });
       
+      // Dialog Göster
       if(mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("İşlem Başarılı! Net Kar: ${NumberFormat.currency(locale:"tr", symbol:"₺").format(netKar)}"), backgroundColor: Colors.green)
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+            title: Column(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.green, size: 60),
+                const SizedBox(height: 10),
+                const Text("Satış Başarılı", style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(NumberFormat.currency(locale:"tr", symbol:"₺").format(tahsilEdilenTutar), style: const TextStyle(fontSize: 20, color: Colors.black54)),
+              ],
+            ),
+            content: const Text("İşlem kaydedildi. Fiş yazdırmak ister misiniz?", textAlign: TextAlign.center),
+            actions: [
+              ElevatedButton.icon(
+                onPressed: () {
+                  FisIslemleri.yazdir(context, satisVerisi, _firmaAdi);
+                }, 
+                icon: const Icon(Icons.print),
+                label: const Text("FİŞ YAZDIR"),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.blueGrey, foregroundColor: Colors.white),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx); 
+                }, 
+                child: const Text("YENİ SATIŞ", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))
+              ),
+            ],
+            actionsAlignment: MainAxisAlignment.spaceEvenly,
+          )
         );
       }
     } catch(e) { 
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Hata oluştu!"), backgroundColor: Colors.red));
+      print("HATA: $e");
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Kayıt sırasında hata oluştu!"), backgroundColor: Colors.red));
     }
-  } 
- Future<void> _fisYazdir(NumberFormat fmt) async {
-    // 1. Türkçe Karakter Destekleyen Fontu Yükle
-    final font = await PdfGoogleFonts.robotoRegular();
-    final boldFont = await PdfGoogleFonts.robotoBold();
-
-    final doc = pw.Document();
-    
-    doc.addPage(pw.Page(
-      pageFormat: PdfPageFormat.roll80, // Rulo kağıt formatı
-      theme: pw.ThemeData.withFont(base: font, bold: boldFont), // Fontu temaya ekle
-      build: (pw.Context context) {
-        return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-            // FİRMA ADI BURADA DİNAMİK OLDU
-            pw.Center(child: pw.Text(_firmaAdi, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16), textAlign: pw.TextAlign.center)),
-            pw.Divider(),
-            pw.Text("Tarih: ${DateFormat('dd.MM.yyyy HH:mm').format(DateTime.now())}"),
-            pw.Text("Personel: ${_secilenPersonel ?? '-'}"),
-            pw.Divider(),
-            ..._sepet.map((s) => pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
-              // Ürün ismini biraz küçülttük sığması için
-              pw.Expanded(child: pw.Text(s.tur.startsWith("ziynet") ? "${s.urunAdi} x${s.gram.toInt()}" : "${s.urunAdi} (${s.gram} gr)", style: const pw.TextStyle(fontSize: 10))),
-              pw.Text(fmt.format(s.deger * s.gram), style: const pw.TextStyle(fontSize: 10)),
-            ])),
-            pw.Divider(),
-            pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
-                pw.Text("TOPLAM:", style: pw.TextStyle(fontWeight: pw.FontWeight.bold)), 
-                pw.Text(fmt.format(_toplamNakit), style: pw.TextStyle(fontWeight: pw.FontWeight.bold))
-            ]),
-            pw.SizedBox(height: 20), 
-            pw.Center(child: pw.Text("Teşekkür Ederiz...", style: const pw.TextStyle(fontSize: 10))),
-        ]);
-      }
-    ));
-    await Printing.layoutPdf(onLayout: (format) async => doc.save());
   }
-
  void _gecmisSatislariGoster(BuildContext context, NumberFormat fmt) {
     Navigator.push(
       context, 
@@ -2612,17 +2628,16 @@ class _SatisGecmisiSayfasiState extends State<SatisGecmisiSayfasi> {
   DateTime _baslangicTarihi = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
   DateTime _bitisTarihi = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day, 23, 59, 59);
 
-  // --- DÜZELTME: Bu fonksiyon bozuk formatlı sayıları tamir eder ---
+  
   double _safeParse(String val) {
     if (val.isEmpty) return 0;
-    // Önce TL ve boşlukları temizle
+    
     String temiz = val.replaceAll('₺', '').replaceAll('TL', '').trim();
     
-    // Eğer virgül varsa (Türkçe format: 64.151,78), noktaları sil, virgülü nokta yap
     if (temiz.contains(',')) {
       temiz = temiz.replaceAll('.', '').replaceAll(',', '.');
     } 
-    // Sadece nokta varsa ve düz sayı ise dokunma
+    
     
     return double.tryParse(temiz) ?? 0;
   }
@@ -2797,7 +2812,16 @@ class _SatisGecmisiSayfasiState extends State<SatisGecmisiSayfasi> {
                                          label: const Text("Sil", style: TextStyle(color: Colors.red)),
                                        ),
                                        ElevatedButton.icon(
-                                         onPressed: () => _gecmisFisYazdir(data, fmt), 
+                                         onPressed: () async {                                        
+                                         String fAdi = "Kuyumcu";
+                                         try {
+                                           var doc = await DB.ref('ayarlar').doc('genel').get();
+                                           if(doc.exists) fAdi = doc['firma_adi'];
+                                         } catch(e){}
+                                         
+                                         // Yeni Sınıfı Kullanıyoruz
+                                         FisIslemleri.yazdir(context, data, fAdi);
+                                        },
                                          icon: const Icon(Icons.print, size: 18),
                                          label: const Text("Fiş Yazdır"),
                                          style: ElevatedButton.styleFrom(backgroundColor: Colors.blueGrey, foregroundColor: Colors.white),
@@ -2821,80 +2845,6 @@ class _SatisGecmisiSayfasiState extends State<SatisGecmisiSayfasi> {
     );
   }
 
-  // --- MÜŞTERİ FİŞİ OLUŞTURMA (GÜVENLİ PARSE İLE) ---
- Future<void> _gecmisFisYazdir(Map<String, dynamic> data, NumberFormat fmt) async {
-    // 1. Fontları Yükle
-    final font = await PdfGoogleFonts.robotoRegular();
-    final boldFont = await PdfGoogleFonts.robotoBold();
-
-    // 2. Firma Adını Veritabanından Çek (Çünkü bu sayfada değişken yok)
-    String firmaAdiGecmis = "Kuyumcu";
-    try {
-      var ayarDoc = await DB.ref('ayarlar').doc('genel').get();
-      if(ayarDoc.exists) {
-        var ayarData = ayarDoc.data() as Map<String, dynamic>;
-        firmaAdiGecmis = ayarData['firma_adi'] ?? "Kuyumcu";
-      }
-    } catch(e) {
-      print("Firma adı çekilemedi: $e");
-    }
-
-    final doc = pw.Document();
-    
-    String tarih = data['tarih'] != null ? DateFormat('dd.MM.yyyy HH:mm').format((data['tarih'] as Timestamp).toDate()) : "-";
-    String personel = data['personel'] ?? "-";
-    String odeme = data['odeme_tipi'] ?? "-";
-    double toplamTutar = (data['tutar'] ?? 0).toDouble();
-    List<dynamic> urunler = data['urunler'] ?? [];
-
-    doc.addPage(pw.Page(
-      pageFormat: PdfPageFormat.roll80,
-      theme: pw.ThemeData.withFont(base: font, bold: boldFont), // Font Ayarı
-      build: (pw.Context context) {
-        return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-            // DİNAMİK FİRMA ADI
-            pw.Center(child: pw.Text(firmaAdiGecmis, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16), textAlign: pw.TextAlign.center)),
-            pw.Center(child: pw.Text("Müşteri Bilgi Fişi", style: const pw.TextStyle(fontSize: 10))),
-            pw.Divider(),
-            pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [pw.Text("Tarih:"), pw.Text(tarih)]),
-            pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [pw.Text("Satış:"), pw.Text(personel)]),
-            pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [pw.Text("Ödeme:"), pw.Text(odeme)]),
-            pw.Divider(),
-            
-            ...urunler.map((uString) {
-                List<String> p = uString.toString().split(" | ");
-                String ad = p[0];
-                String miktar = p.length > 1 ? p[1] : "";
-                
-                String fiyat = "";
-                if(p.length > 2) {
-                   double val = _safeParse(p[2]); // Senin için yazdığım safeParse
-                   fiyat = fmt.format(val);
-                }
-                
-                return pw.Container(
-                  margin: const pw.EdgeInsets.only(bottom: 4),
-                  child: pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                    children: [
-                      pw.Expanded(child: pw.Text("$ad $miktar", style: const pw.TextStyle(fontSize: 10))),
-                      pw.Text(fiyat, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-                    ]
-                  )
-                );
-            }).toList(),
-            
-            pw.Divider(),
-            pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [pw.Text("TOPLAM:", style: pw.TextStyle(fontWeight: pw.FontWeight.bold)), pw.Text(fmt.format(toplamTutar), style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14))]),
-            pw.SizedBox(height: 20), 
-            pw.Center(child: pw.Text("İyi Günler Dileriz...", style: const pw.TextStyle(fontSize: 10))),
-            pw.Center(child: pw.Text("Mali Değeri Yoktur", style: const pw.TextStyle(fontSize: 8))),
-        ]);
-      }
-    ));
-    
-    await Printing.layoutPdf(onLayout: (format) async => doc.save());
-  }
     Widget _dashboardKutu(String baslik, String deger, Color renk) {
     return Expanded(
       child: Container(
@@ -3122,3 +3072,93 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }}
+  class FisIslemleri {
+  
+  static double _safeParse(dynamic val) {
+    if (val == null) return 0;
+    String temiz = val.toString().replaceAll('₺', '').replaceAll('TL', '').trim();
+    if (temiz.contains(',')) {
+      temiz = temiz.replaceAll('.', '').replaceAll(',', '.');
+    }
+    return double.tryParse(temiz) ?? 0;
+  }
+
+  static Future<void> yazdir(BuildContext context, Map<String, dynamic> data, String firmaAdi) async {
+    try {
+      final font = await PdfGoogleFonts.robotoRegular();
+      final boldFont = await PdfGoogleFonts.robotoBold();
+      final fmt = NumberFormat.currency(locale: "tr_TR", symbol: "₺", decimalDigits: 2);
+
+      final doc = pw.Document();
+      
+      // Tarih Ayarı
+      String tarih = "-";
+      if (data['tarih'] != null) {
+        if (data['tarih'] is Timestamp) {
+          tarih = DateFormat('dd.MM.yyyy HH:mm').format((data['tarih'] as Timestamp).toDate());
+        } else if (data['tarih'] is DateTime) {
+          tarih = DateFormat('dd.MM.yyyy HH:mm').format(data['tarih']);
+        } else {
+          tarih = data['tarih'].toString();
+        }
+      }
+
+      String personel = data['personel'] ?? "-";
+      String odeme = data['odeme_tipi'] ?? "-";
+      double toplamTutar = (data['tutar'] ?? 0).toDouble();
+      List<dynamic> urunler = data['urunler'] ?? [];
+
+      doc.addPage(pw.Page(
+        pageFormat: PdfPageFormat.roll80,
+        theme: pw.ThemeData.withFont(base: font, bold: boldFont),
+        build: (pw.Context pdfCtx) {
+          return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+              pw.Center(child: pw.Text(firmaAdi, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16), textAlign: pw.TextAlign.center)),
+              pw.Center(child: pw.Text("Müşteri Bilgi Fişi", style: const pw.TextStyle(fontSize: 10))),
+              pw.Divider(),
+              pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [pw.Text("Tarih:"), pw.Text(tarih)]),
+              pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [pw.Text("Satış:"), pw.Text(personel)]),
+              pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [pw.Text("Ödeme:"), pw.Text(odeme)]),
+              pw.Divider(),
+              
+              ...urunler.map((uString) {
+                  List<String> p = uString.toString().split(" | ");
+                  String ad = p[0];
+                  String miktar = p.length > 1 ? p[1] : "";
+                  String fiyat = "";
+                  if(p.length > 2) {
+                     double val = _safeParse(p[2]); 
+                     fiyat = fmt.format(val);
+                  }
+                  
+                  return pw.Container(
+                    margin: const pw.EdgeInsets.only(bottom: 4),
+                    child: pw.Row(
+                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                      children: [
+                        pw.Expanded(child: pw.Text("$ad $miktar", style: const pw.TextStyle(fontSize: 10))),
+                        pw.Text(fiyat, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
+                      ]
+                    )
+                  );
+              }).toList(),
+              
+              pw.Divider(),
+              pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
+                  pw.Text("TOPLAM:", style: pw.TextStyle(fontWeight: pw.FontWeight.bold)), 
+                  pw.Text(fmt.format(toplamTutar), style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14))
+              ]),
+              pw.SizedBox(height: 20), 
+              pw.Center(child: pw.Text("İyi Günler Dileriz...", style: const pw.TextStyle(fontSize: 10))),
+              pw.Center(child: pw.Text("Mali Değeri Yoktur", style: const pw.TextStyle(fontSize: 8))),
+          ]);
+        }
+      ));
+      
+      await Printing.layoutPdf(onLayout: (format) async => doc.save());
+    } catch (e) {
+      print("Yazıcı Hatası: $e");
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Yazıcı hatası oluştu."), backgroundColor: Colors.red));
+    }
+  }
+}
